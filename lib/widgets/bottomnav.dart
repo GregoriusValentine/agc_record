@@ -45,7 +45,7 @@ class _BottomNavWidgetsState extends State<BottomNavWidgets> {
               Icons.mic_none_rounded,
               color: Colors.green,
             ),
-            label: 'Rocord',
+            label: 'Record',
           ),
           NavigationDestination(
             selectedIcon: Icon(
