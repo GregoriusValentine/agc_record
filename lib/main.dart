@@ -1,3 +1,4 @@
+import 'package:agc_record/splash_screen.dart';
 import 'package:agc_record/widgets/bottomnav.dart';
 import 'package:flutter/material.dart';
 
@@ -16,7 +17,7 @@ class MainApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
       ),
-      home: BottomNavWidgets(),
+      home: SplashScreen(),
     );
   }
 }
