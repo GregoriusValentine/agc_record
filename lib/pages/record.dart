@@ -1,6 +1,11 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:audio_waveforms/audio_waveforms.dart';
+import 'package:image_gallery_saver/image_gallery_saver.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:record/record.dart';
 
 class recordWidget extends StatefulWidget {
   const recordWidget({super.key});
@@ -10,49 +15,77 @@ class recordWidget extends StatefulWidget {
 }
 
 class _recordWidgetState extends State<recordWidget> {
+  late final RecorderController _recorderController;
+  late final AudioRecorder audioRecord;
+  String audioPath = '';
   late Timer _timer;
   int _seconds = 0;
   bool _isRecording = false;
   bool _isPaused = false;
 
-  late final RecorderController _recorderController;
-
   @override
   void initState() {
     super.initState();
     _recorderController = RecorderController();
-    // Jika ada metode inisialisasi lain, panggil di sini
+    audioRecord = AudioRecorder();
+    _requestPermissions();
   }
 
   @override
   void dispose() {
     _recorderController.dispose();
-    if (_timer.isActive) _timer.cancel();
+    audioRecord.dispose();
+    _timer?.cancel();
     super.dispose();
   }
 
-  void _startOrStopRecording() async {
-    if (_isRecording) {
-      await _recorderController.stop();
-      _timer.cancel();
-      setState(() {
-        _isRecording = false;
-        _isPaused = false;
-        _seconds = 0; // Reset timer
-      });
-    } else {
-      await _recorderController.record();
-      _timer = Timer.periodic(Duration(seconds: 1), (timer) {
-        if (!_isPaused) {
+  Future<void> _requestPermissions() async {
+    await Permission.microphone.request();
+    await Permission.storage.request();
+  }
+
+  Future<void> _startOrStopRecording() async {
+    try{
+      if(await audioRecord.hasPermission()){
+        if (_isRecording) {
+          await _recorderController.stop();
+          String? path = await audioRecord.stop();
+          _timer?.cancel();
           setState(() {
-            _seconds++;
+            _isRecording = false;
+            _isPaused = false;
+            _seconds = 0;
+            audioPath = path!;
           });
+        } else {
+          if(await Permission.storage.request().isGranted){
+            final directory = await getExternalStorageDirectory();
+            final recordingsDir = Directory('${directory!.path}/MyRecordings');
+            if (!await recordingsDir.exists()) {
+              await recordingsDir.create(recursive: true);
+              print('Directory created: ${recordingsDir.path}');
+            } else {
+              print('Directory already exists: ${recordingsDir.path}');
+            }
+            audioPath = '${recordingsDir.path}/my_recording_${DateTime.now().millisecondsSinceEpoch}.wav';
+            print('Recording path: $audioPath');
+            _timer = Timer.periodic(Duration(seconds: 1), (timer) {
+              if (!_isPaused) {
+                setState(() {
+                  _seconds++;
+                });
+              }
+            });
+            await _recorderController.record();
+            await audioRecord.start(const RecordConfig(), path: audioPath);
+            setState(() {
+              _isRecording = true;
+            });
+          }
         }
-      });
-      
-      setState(() {
-        _isRecording = true;
-      });
+      }
+    }catch(e){
+      print("Error Recording: $e");
     }
   }
 
@@ -68,7 +101,7 @@ class _recordWidgetState extends State<recordWidget> {
         _isPaused = false;
       });
     }
-    if (!_timer.isActive) {
+    if (_timer == null || !_timer!.isActive) {
       _timer = Timer.periodic(Duration(seconds: 1), (timer) {
         if (!_isPaused) {
           setState(() {
@@ -81,7 +114,7 @@ class _recordWidgetState extends State<recordWidget> {
 
   void _resetTimer() async {
     await _recorderController.stop();
-    if (_timer.isActive) _timer.cancel(); // Menghentikan timer jika aktif
+    _timer?.cancel(); // Menghentikan timer jika aktif
     setState(() {
       _seconds = 0;
       _isPaused = true;

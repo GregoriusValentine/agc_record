@@ -10,6 +10,10 @@ dependencies:
   flutter:
     sdk: flutter
   audio_waveforms:
+  record: ^5.1.2
+  path_provider: ^2.1.4
+  permission_handler: ^11.3.1
+  image_gallery_saver: ^2.0.3
   lottie: ^2.3.2
   animated_splash_screen:
   flutter_launcher_icons: "^0.13.1"
