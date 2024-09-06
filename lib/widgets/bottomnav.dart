@@ -13,6 +13,7 @@ class BottomNavWidgets extends StatefulWidget {
 class _BottomNavWidgetsState extends State<BottomNavWidgets> {
   int selectedIndex = 0;
   PageController pageController = PageController();
+  String audioPath = '';
 
   // Function pindah tab
   void onTapped(int index) {
@@ -55,7 +56,7 @@ class _BottomNavWidgetsState extends State<BottomNavWidgets> {
               Icons.cloud_upload_outlined,
               color: Colors.green,
             ),
-            label: 'Share',
+            label: 'Result Record',
           ),
           NavigationDestination(
             selectedIcon: Icon(
@@ -65,7 +66,7 @@ class _BottomNavWidgetsState extends State<BottomNavWidgets> {
               Icons.my_library_music_outlined,
               color: Colors.green,
             ),
-            label: 'Result',
+            label: 'Result AGC',
           ),
         ], 
       ),

@@ -9,7 +9,6 @@ import 'package:record/record.dart';
 
 class recordWidget extends StatefulWidget {
   const recordWidget({super.key});
-
   @override
   State<recordWidget> createState() => _recordWidgetState();
 }
@@ -18,7 +17,7 @@ class _recordWidgetState extends State<recordWidget> {
   late final RecorderController _recorderController;
   late final AudioRecorder audioRecord;
   String audioPath = '';
-  late Timer _timer;
+  Timer? _timer;
   int _seconds = 0;
   bool _isRecording = false;
   bool _isPaused = false;
