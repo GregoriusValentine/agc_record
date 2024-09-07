@@ -16,6 +16,7 @@ class _shareWidgetState extends State<shareWidget> {
   List<FileSystemEntity> audioFiles = [];
   int? _playingIndex; // Menyimpan index file yang sedang diputar
   bool isPaused = false; // Menyimpan status audio apakah sedang di-pause atau tidak
+  Map<int, List<double>> waveforms = {};
 
   @override
   void initState() {
@@ -38,19 +39,33 @@ class _shareWidgetState extends State<shareWidget> {
       setState(() {
         audioFiles = recordingsDir.listSync(); // Ambil semua file dalam folder
       });
+      for (int i = 0; i < audioFiles.length; i++) {
+        final file = audioFiles[i];
+        await ekstrakAudio(file.path, i);  // Ekstrak waveform saat memuat file
+      }
     }
   }
 
-  Future<void> ekstrakAudio() async {
+  Future<void> ekstrakAudio(String path, int index) async {
+    try {
+      // Mengambil data waveform dalam bentuk List<double>
+      final List<double> waveform = await playerController.extractWaveformData(path: path);
 
+      setState(() {
+        // Simpan data waveform berdasarkan index file audio
+        waveforms[index] = waveform;
+      });
+    } catch (e) {
+      print('Error extracting waveform: $e');
+    }
   }
 
-// Fungsi untuk memutar audio dari path yang dipilih
+
   Future<void> playAudio(String path, int index) async {
     try {
       if (_playingIndex == index && isPaused) {
         // Jika audio di-pause, lanjutkan dari posisi terakhir
-        await playerController.startPlayer(finishMode: FinishMode.loop); // Mulai memutar dari posisi terakhir
+        await playerController.startPlayer(finishMode: FinishMode.loop);
         setState(() {
           isPaused = false;
         });
@@ -71,17 +86,19 @@ class _shareWidgetState extends State<shareWidget> {
           _playingIndex = index;
           isPaused = false;
         });
-        await playerController.preparePlayer(
-          path: path
-        );
-        await playerController.startPlayer(finishMode: FinishMode.loop); // Mulai pemutaran dari awal
+        
+        // Menyiapkan player untuk file audio baru
+        await playerController.preparePlayer(path: path);
+
+        // Mulai pemutaran dari awal
+        await playerController.startPlayer(finishMode: FinishMode.loop);
       }
     } catch (e) {
       print("Ini error saat pemutaran suara: $e");
     }
   }
 
-    // Fungsi untuk menghapus rekaman
+  // Fungsi untuk menghapus rekaman
   Future<void> deleteAudio(FileSystemEntity file, int index) async {
     try {
       await file.delete();
@@ -105,15 +122,7 @@ class _shareWidgetState extends State<shareWidget> {
           ),
         ),
       ),
-      body: FutureBuilder <void>(
-        future: _loadAudioFiles(), 
-        builder: (context, snapshot) {
-          if (snapshot.hasError){
-            return Center(
-              child: Text('Error: ${snapshot.error}'),
-            );
-          }else if (audioFiles.isNotEmpty) {
-            return ListView.builder(
+      body: ListView.builder(
               scrollDirection: Axis.vertical,
               itemCount: audioFiles.length,
               itemBuilder: (context, index) {
@@ -155,18 +164,18 @@ class _shareWidgetState extends State<shareWidget> {
                                 Expanded(
                                   child: Padding(
                                     padding: const EdgeInsets.only(left: 8.0), // Tambah padding agar dimulai dari samping icon
-                                    child: _playingIndex == index ?
+                                    child: 
                                     AudioFileWaveforms(
                                       playerController: playerController,
                                       size: Size(MediaQuery.of(context).size.width, 30),
                                       enableSeekGesture: true, // Aktifkan gesture seek
-                                      waveformData: [],
+                                      waveformData: [], // Gunakan data dari state
                                       playerWaveStyle: PlayerWaveStyle(
                                         fixedWaveColor: Colors.blueGrey, // Warna abu-abu biru sebelum diputar
                                         liveWaveColor: Colors.blueAccent, // Warna biru saat audio diputar
                                         waveThickness: 2.0, // Ketebalan wave
                                       ),
-                                    ): Container(),
+                                    ),
                                   ),
                                 ),
                                 // Icon share
@@ -192,14 +201,7 @@ class _shareWidgetState extends State<shareWidget> {
                   ],
                 );
               },
-            );
-          }else{
-            return Center(
-              child: Text('Data suara kosong.'),
-            );
-          }
-        }
-      ) 
+            )
     );
   }
 }
