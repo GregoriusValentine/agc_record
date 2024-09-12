@@ -4,16 +4,36 @@ import 'package:agc_record/pages/share.dart';
 import 'package:flutter/material.dart';
 
 class BottomNavWidgets extends StatefulWidget {
-  const BottomNavWidgets({super.key});
+  final int initialIndex;
+  const BottomNavWidgets({super.key, this.initialIndex = 0});
 
   @override
   State<BottomNavWidgets> createState() => _BottomNavWidgetsState();
 }
 
 class _BottomNavWidgetsState extends State<BottomNavWidgets> {
-  int selectedIndex = 0;
-  PageController pageController = PageController();
-  String audioPath = '';
+  late int selectedIndex;
+  late PageController pageController;
+
+
+  @override
+  void initState() {
+    super.initState();
+    selectedIndex = widget.initialIndex;
+    pageController = PageController(initialPage: selectedIndex);
+    // Listen to page changes to update selected index
+    pageController.addListener(() {
+      setState(() {
+        selectedIndex = pageController.page!.toInt();
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    pageController.dispose();
+    super.dispose();
+  }
 
   // Function pindah tab
   void onTapped(int index) {
@@ -31,7 +51,7 @@ class _BottomNavWidgetsState extends State<BottomNavWidgets> {
         physics: const NeverScrollableScrollPhysics(),
         children: [
           recordWidget(),
-          shareWidget(),
+          shareWidget(selectedIndex: 1),
           resultWidget()
         ],
       ),

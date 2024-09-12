@@ -1,112 +1,140 @@
 import 'dart:io';
 
+import 'package:agc_record/pages/fadepageroute.dart';
+import 'package:agc_record/widgets/bottomnav.dart';
 import 'package:audio_waveforms/audio_waveforms.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 
 class shareWidget extends StatefulWidget {
-  const shareWidget({super.key});
-  
+  final int selectedIndex;
+  const shareWidget({super.key, required this.selectedIndex});
+
   @override
   State<shareWidget> createState() => _shareWidgetState();
 }
 
 class _shareWidgetState extends State<shareWidget> {
-  late final PlayerController playerController;
   List<FileSystemEntity> audioFiles = [];
-  int? _playingIndex; // Menyimpan index file yang sedang diputar
-  bool isPaused = false; // Menyimpan status audio apakah sedang di-pause atau tidak
-  Map<int, List<double>> waveforms = {};
+  List<PlayerController> playerControllers = [];
+  int? _playingIndex;
+  bool isPaused = false;
+  bool isLoading = true;
 
   @override
   void initState() {
     super.initState();
-    playerController = PlayerController();
-    _loadAudioFiles(); 
+    _loadAudioFiles();
   }
 
   @override
   void dispose() {
-    playerController.dispose();
+    for (var controller in playerControllers) {
+      controller.dispose();
+    }
     super.dispose();
   }
 
-  // Fungsi untuk mengambil semua file rekaman di folder MyRecordings
-  Future<void> _loadAudioFiles() async {
-    final directory = await getExternalStorageDirectory();
-    final recordingsDir = Directory('${directory!.path}/MyRecordings');
-    if (await recordingsDir.exists()) {
-      setState(() {
-        audioFiles = recordingsDir.listSync(); // Ambil semua file dalam folder
-      });
-      for (int i = 0; i < audioFiles.length; i++) {
-        final file = audioFiles[i];
-        await ekstrakAudio(file.path, i);  // Ekstrak waveform saat memuat file
-      }
-    }
-  }
-
-  Future<void> ekstrakAudio(String path, int index) async {
-    try {
-      // Mengambil data waveform dalam bentuk List<double>
-      final List<double> waveform = await playerController.extractWaveformData(path: path);
-
-      setState(() {
-        // Simpan data waveform berdasarkan index file audio
-        waveforms[index] = waveform;
-      });
-    } catch (e) {
-      print('Error extracting waveform: $e');
-    }
-  }
-
-
   Future<void> playAudio(String path, int index) async {
     try {
-      if (_playingIndex == index && isPaused) {
-        // Jika audio di-pause, lanjutkan dari posisi terakhir
-        await playerController.startPlayer(finishMode: FinishMode.loop);
+      print("${index}");
+      if(_playingIndex == index && isPaused){
+        print('ini if yang pertama: ${_playingIndex == index && isPaused}, ${_playingIndex}, ${isPaused}');
+        await playerControllers[index].startPlayer(finishMode: FinishMode.loop);
         setState(() {
           isPaused = false;
         });
-      } else if (_playingIndex == index) {
-        // Jika audio sedang diputar, hentikan pemutaran (pause)
-        await playerController.pausePlayer();
+      } else if (_playingIndex == index){
+        print('ini else if yang pertama: ${_playingIndex}, ${isPaused}');
+        await playerControllers[index].pausePlayer();
         setState(() {
           isPaused = true;
         });
-      } else {
-        // Jika ada audio lain yang sedang diputar, hentikan terlebih dahulu
-        if (_playingIndex != null) {
-          await playerController.stopPlayer();
+      }else{
+        print('ini else : ${_playingIndex}, ${isPaused}, ${_playingIndex != index && _playingIndex != null}');
+        if(_playingIndex != index && _playingIndex != null){
+          await playerControllers[_playingIndex!].pausePlayer();
         }
-
-        // Siapkan pemutar audio untuk audio baru
         setState(() {
           _playingIndex = index;
           isPaused = false;
-        });
-        
-        // Menyiapkan player untuk file audio baru
-        await playerController.preparePlayer(path: path);
 
-        // Mulai pemutaran dari awal
-        await playerController.startPlayer(finishMode: FinishMode.loop);
+        });
+        await playerControllers[index].startPlayer(finishMode: FinishMode.loop);
       }
     } catch (e) {
-      print("Ini error saat pemutaran suara: $e");
+      print("Error saat pemutaran suara: $e");
+    }
+  }
+  
+
+  Future<void> deleteAudio(FileSystemEntity file, int index) async {
+    try {
+      print("${file},${playerControllers}, ${index}");
+      if(_playingIndex == index){
+        await playerControllers[index].pausePlayer();
+        setState(() {
+          isPaused = true;
+        });
+      }else if (_playingIndex !=index && _playingIndex != null){
+        await playerControllers[_playingIndex!].pausePlayer();
+        setState(() {
+          isPaused = true;
+        });
+      }
+
+      await file.delete();
+
+      setState(() {
+        audioFiles.removeAt(index);
+        playerControllers.remove(playerControllers[index]);
+        _playingIndex = null;
+        isPaused = false;
+      });
+
+      Navigator.pushReplacement(
+        context,
+        FadePageRoute(
+          page: BottomNavWidgets(initialIndex: widget.selectedIndex),
+        ),
+      );
+    } catch (e) {
+      print("Error saat menghapus file: $e");
     }
   }
 
-  // Fungsi untuk menghapus rekaman
-  Future<void> deleteAudio(FileSystemEntity file, int index) async {
+  Future<void> _loadAudioFiles() async {
     try {
-      await file.delete();
-      setState(() {
-        audioFiles.removeAt(index);
-      });
+      final directory = await getExternalStorageDirectory();
+      final recordingsDir = Directory('${directory!.path}/MyRecordings');
+      if (await recordingsDir.exists()) {
+        setState(() {
+          audioFiles = recordingsDir.listSync()
+          ..sort((a, b) => a.statSync().modified.compareTo(b.statSync().modified));
+          playerControllers = List<PlayerController>.generate(
+            audioFiles.length,
+            (index) => PlayerController(),
+          );
+          for (int i = 0; i < audioFiles.length; i++) {
+            final file = audioFiles[i];
+            final playerController = playerControllers[i];
+            playerController.preparePlayer(
+              path: file.path,
+              shouldExtractWaveform: true,
+            );
+          }
+          isLoading = false; 
+        });
+      } else {
+        setState(() {
+          isLoading = false;
+        });
+      }
     } catch (e) {
-      print("ini error saat penghapusan: $e");
+      print("Error saat memuat file audio: $e");
+      setState(() {
+        isLoading = false;
+      });
     }
   }
 
@@ -115,93 +143,127 @@ class _shareWidgetState extends State<shareWidget> {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.blueAccent,
-        title: Text(
+        title: const Text(
           'Share',
           style: TextStyle(
-            color: Colors.white
+            color: Colors.white,
           ),
         ),
       ),
-      body: ListView.builder(
-              scrollDirection: Axis.vertical,
-              itemCount: audioFiles.length,
-              itemBuilder: (context, index) {
-                final file = audioFiles[index];
-                final fileName = file.path.split('/').last; // Mengambil nama file
-                return Column(
-                  children: [
-                    Card(
-                      color: Colors.grey[700], // Warna latar belakang gelap
-                      child: Padding(
-                        padding: const EdgeInsets.all(8.0),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+      body: SafeArea( 
+        child: isLoading
+          ? Center(
+              child: CircularProgressIndicator(), // Indikator loading
+            )
+          : audioFiles.isEmpty
+          ? Center(
+              child: Container(
+                width: MediaQuery.of(context).size.width*0.5,
+                height: MediaQuery.of(context).size.height*0.15,
+                child: Opacity(
+                  opacity: 0.5,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.cloud_off_rounded,
+                        size: 100,
+                      ),
+                      Text(
+                        "Data Audio Kosong",
+                        style: TextStyle(
+                          color: Colors.grey,
+                          fontSize: 20
+                        ),
+                      )
+                    ],
+                  ),
+                ),
+              )
+            )
+          : ListView.builder(
+          scrollDirection: Axis.vertical,
+          itemCount: audioFiles.length,
+          itemBuilder: (context, index) {
+            final file = audioFiles[index];
+            final fileName = file.path.split('/').last;
+            final playerController = playerControllers[index];
+            return Column(
+              children: [
+                Card(
+                  color: Colors.grey[700],
+                  child: Padding(
+                    padding: const EdgeInsets.all(8.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.all(8.0),
+                          child: Text(
+                            fileName, 
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                              color: Colors.grey,
+                            ),
+                          ),
+                        ),
+                        Row(
                           children: [
-                            Padding(
-                              padding: const EdgeInsets.all(8.0),
-                              child: Text(
-                                fileName, // Menampilkan nama file di atas waveform
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 16,
-                                  color: Colors.grey,
+                            // Icon play/pause
+                            IconButton(
+                              icon: Icon(
+                                _playingIndex == index && !isPaused
+                                    ? Icons.pause
+                                    : Icons.play_arrow,
+                                color: Colors.blue,
+                              ),
+                              onPressed: () {
+                                playAudio(file.path, index);
+                              }
+                            ),
+                            // Audio Waveforms
+                            Expanded(
+                              child: AudioFileWaveforms(
+                                playerController: playerController,
+                                size: Size(MediaQuery.of(context).size.width, 30),
+                                enableSeekGesture: true,
+                                // waveformData: [],
+                                waveformType: WaveformType.long,
+                                playerWaveStyle: const PlayerWaveStyle(
+                                  fixedWaveColor: Colors.white,
+                                  liveWaveColor: Colors.blueAccent,
+                                  waveThickness: 2.0, // Ketebalan wave
+                                  seekLineThickness: 2.0,
+                                  showSeekLine: false,
                                 ),
                               ),
                             ),
-                            Row(
-                              children: [
-                                // Icon play/pause
-                                IconButton(
-                                  icon: Icon(
-                                    _playingIndex == index && !isPaused ? Icons.pause : Icons.play_arrow,
-                                    color: Colors.blue,
-                                  ),
-                                  onPressed: () {
-                                    playAudio(file.path, index); // Memutar audio sesuai index
-                                  },
-                                ),
-                                // Audio waveform dimulai dari samping icon play
-                                Expanded(
-                                  child: Padding(
-                                    padding: const EdgeInsets.only(left: 8.0), // Tambah padding agar dimulai dari samping icon
-                                    child: 
-                                    AudioFileWaveforms(
-                                      playerController: playerController,
-                                      size: Size(MediaQuery.of(context).size.width, 30),
-                                      enableSeekGesture: true, // Aktifkan gesture seek
-                                      waveformData: [], // Gunakan data dari state
-                                      playerWaveStyle: PlayerWaveStyle(
-                                        fixedWaveColor: Colors.blueGrey, // Warna abu-abu biru sebelum diputar
-                                        liveWaveColor: Colors.blueAccent, // Warna biru saat audio diputar
-                                        waveThickness: 2.0, // Ketebalan wave
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                // Icon share
-                                IconButton(
-                                  icon: const Icon(Icons.share, color: Colors.blue),
-                                  onPressed: () {
-                                    // shareAudio(file); // Share audio file
-                                  },
-                                ),
-                                // Icon delete
-                                IconButton(
-                                  icon: const Icon(Icons.delete, color: Colors.red),
-                                  onPressed: () {
-                                    deleteAudio(file, index); // Hapus file audio
-                                  },
-                                ),
-                              ],
+                            // Icon share
+                            IconButton(
+                              icon: const Icon(Icons.share, color: Colors.blue),
+                              onPressed: () {
+                                // shareAudio(File(file.path)); // Share audio file
+                              },
+                            ),
+                            // Icon delete
+                            IconButton(
+                              icon: const Icon(Icons.delete, color: Colors.red),
+                              onPressed: () {
+                                deleteAudio(file, index);
+                              },
                             ),
                           ],
-                        )
-                      ),
+                        ),
+                      ],
                     ),
-                  ],
-                );
-              },
-            )
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
     );
   }
 }
