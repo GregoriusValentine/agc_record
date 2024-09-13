@@ -1,19 +1,21 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:another_flushbar/flushbar.dart';
 import 'package:flutter/material.dart';
 import 'package:audio_waveforms/audio_waveforms.dart';
 import 'package:image_gallery_saver/image_gallery_saver.dart';
+import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:record/record.dart';
 
-class recordWidget extends StatefulWidget {
-  const recordWidget({super.key});
+class RecordingWidget extends StatefulWidget {
+  const RecordingWidget({super.key});
   @override
-  State<recordWidget> createState() => _recordWidgetState();
+  State<RecordingWidget> createState() => _RecordingWidgetState();
 }
 
-class _recordWidgetState extends State<recordWidget> {
+class _RecordingWidgetState extends State<RecordingWidget> {
   late final RecorderController _recorderController;
   late final AudioRecorder audioRecord;
   String audioPath = '';
@@ -43,6 +45,40 @@ class _recordWidgetState extends State<recordWidget> {
     await Permission.storage.request();
   }
 
+  Future<String> _getIncrementedFileName(Directory recordingsDir) async {
+    final List<FileSystemEntity> files = recordingsDir.listSync();
+    int maxIndex = 0;
+
+    for (var file in files) {
+        final fileName = file.path.split('/').last;
+        final match = RegExp(r'Recording-(\d+)_Time-').firstMatch(fileName);
+        if (match != null) {
+          final index = int.parse(match.group(1)!);
+          if (index > maxIndex) {
+            maxIndex = index;
+          }
+        }
+      }
+    return 'Recording-${maxIndex + 1}';
+  }
+
+  void _showRecordingSavedFlushbar(BuildContext context) {
+    Flushbar(
+      title: "Saved Recordings",
+      message: "Your recording has been successfully saved.",
+      duration: Duration(seconds: 1),
+      backgroundColor: Colors.green,
+      icon: Icon(
+        Icons.check_circle,
+        color: Colors.white,
+      ),
+      flushbarPosition: FlushbarPosition.TOP,
+      flushbarStyle: FlushbarStyle.FLOATING,
+      margin: EdgeInsets.all(8),
+      borderRadius: BorderRadius.circular(8),
+    )..show(context);
+  }
+
   Future<void> _startOrStopRecording() async {
     try{
       if(await audioRecord.hasPermission()){
@@ -56,6 +92,7 @@ class _recordWidgetState extends State<recordWidget> {
             _seconds = 0;
             audioPath = path!;
           });
+          _showRecordingSavedFlushbar(context);
         } else {
           if(await Permission.storage.request().isGranted){
             final directory = await getExternalStorageDirectory();
@@ -66,7 +103,10 @@ class _recordWidgetState extends State<recordWidget> {
             } else {
               print('Directory already exists: ${recordingsDir.path}');
             }
-            audioPath = '${recordingsDir.path}/my_recording_${DateTime.now().millisecondsSinceEpoch}.wav';
+            final now = DateTime.now();
+            final formattedTime = DateFormat('hh-mm-ss-a').format(now);
+            final incrementedFileName = await _getIncrementedFileName(recordingsDir);
+            audioPath = '${recordingsDir.path}/${incrementedFileName}_Time-${formattedTime}.wav';
             print('Recording path: $audioPath');
             _timer = Timer.periodic(Duration(seconds: 1), (timer) {
               if (!_isPaused) {
@@ -91,33 +131,58 @@ class _recordWidgetState extends State<recordWidget> {
   void _pauseOrResumeRecording() async {
     if (_isRecording && !_isPaused) {
       await _recorderController.pause();
+      await audioRecord.pause();
       setState(() {
         _isPaused = true;
       });
     }else if(_isRecording && _isPaused){
       await _recorderController.record();
+      await audioRecord.resume(); // Resume the audio recording
       setState(() {
         _isPaused = false;
       });
     }
-    if (_timer == null || !_timer!.isActive) {
-      _timer = Timer.periodic(Duration(seconds: 1), (timer) {
-        if (!_isPaused) {
-          setState(() {
-            _seconds++;
-          });
-        }
-      });
-    }
   }
 
-  void _resetTimer() async {
-    await _recorderController.stop();
-    _timer?.cancel(); // Menghentikan timer jika aktif
-    setState(() {
-      _seconds = 0;
-      _isPaused = true;
-    });
+  Future<void> _cancelRecording() async {
+    try {
+      if (_isRecording) {
+        // Stop the recording and dispose resources
+        await _recorderController.stop();
+        await audioRecord.stop();
+        _timer?.cancel();
+        
+        // Reset state
+        setState(() {
+          _isRecording = false;
+          _isPaused = false;
+          _seconds = 0;
+        });
+
+        // Delete the temporary file if it exists
+        if (audioPath.isNotEmpty && File(audioPath).existsSync()) {
+          await File(audioPath).delete();
+        }
+
+        // Show flushbar to inform the user that the recording has been canceled
+        Flushbar(
+          title: "Recording Canceled",
+          message: "Your recording has been canceled and is not saved.",
+          duration: Duration(seconds: 1),
+          backgroundColor: Colors.red,
+          icon: Icon(
+            Icons.cancel,
+            color: Colors.white,
+          ),
+          flushbarPosition: FlushbarPosition.TOP,
+          flushbarStyle: FlushbarStyle.FLOATING,
+          margin: EdgeInsets.all(8),
+          borderRadius: BorderRadius.circular(8),
+        )..show(context);
+      }
+    } catch (e) {
+      print("Error saat membatalkan rekaman: $e");
+    }
   }
 
   String _formatTime(int seconds) {
@@ -131,11 +196,12 @@ class _recordWidgetState extends State<recordWidget> {
   Widget build(BuildContext context) {
     var height = MediaQuery.of(context).size.height;
     var width = MediaQuery.of(context).size.width;
+    var isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.blueAccent,
         title: Text(
-          'Record',
+          'Recording',
           style: TextStyle(
             color: Colors.white
           ),
@@ -144,18 +210,18 @@ class _recordWidgetState extends State<recordWidget> {
       body: Container(
         child: Center(
           child: Container(
-            height: height * 0.50,
+            height: isLandscape ? height * 0.8 : height * 0.5,
             child: Column(
               children: [
                 Container(
                   child: Container(
-                    height: height*0.18,
+                    height: isLandscape ? height * 0.2 : height * 0.18,
                     child: Center(
                       child: Container(
                         child: Text(
                           _formatTime(_seconds),
                           style: TextStyle(
-                            fontSize: 50,
+                            fontSize: isLandscape ? 40 : 50,
                             fontWeight: FontWeight.bold
                           ),
                         ),
@@ -164,7 +230,7 @@ class _recordWidgetState extends State<recordWidget> {
                   ),
                 ),
                 Container(
-                  height: height * 0.14,
+                  height: isLandscape ? height * 0.2 : height * 0.14,
                   child: Center(
                     child: Column(
                       children: [
@@ -194,7 +260,7 @@ class _recordWidgetState extends State<recordWidget> {
                                                 ? Icons.play_arrow
                                                 : Icons.pause)
                                             : Icons.mic_rounded,
-                                        size: 50,
+                                        size: isLandscape ? 40 : 50,
                                         color: Colors.black,
                                       ),
                                       onPressed: _isRecording
@@ -206,7 +272,10 @@ class _recordWidgetState extends State<recordWidget> {
                                     _isRecording
                                         ? (_isPaused ? 'Resume' : 'Pause')
                                         : 'Start',
-                                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                                    style: TextStyle(
+                                      fontSize: isLandscape ? 14 : 16, 
+                                      fontWeight: FontWeight.bold
+                                    ),
                                   ),
                                 ],
                               ),
@@ -219,7 +288,7 @@ class _recordWidgetState extends State<recordWidget> {
                                       Ink(
                                         decoration: BoxDecoration(
                                           shape: BoxShape.circle,
-                                          color: Color.fromARGB(255, 250, 103, 66),
+                                          color: Colors.green,
                                           boxShadow: [
                                             BoxShadow(
                                               color: Colors.black.withOpacity(0.6),
@@ -231,15 +300,19 @@ class _recordWidgetState extends State<recordWidget> {
                                         ),
                                         child: IconButton(
                                           icon: Icon(
-                                            Icons.stop,
-                                            size: 50,
+                                            Icons.check_rounded,
+                                            size: isLandscape ? 40 : 50,
                                             color: Colors.black,
                                           ),
                                           onPressed: _startOrStopRecording,
                                         ),
                                       ),
-                                      Text('Stop',
-                                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                                      Text(
+                                        'Saved',
+                                        style: TextStyle(
+                                          fontSize: isLandscape ? 14 : 16, 
+                                          fontWeight: FontWeight.bold
+                                        ),
                                       )
                                     ],
                                   ),
@@ -249,7 +322,7 @@ class _recordWidgetState extends State<recordWidget> {
                                       Ink(
                                         decoration: BoxDecoration(
                                           shape: BoxShape.circle,
-                                          color: Color.fromARGB(255, 250, 103, 66),
+                                          color: Colors.red,
                                           boxShadow: [
                                             BoxShadow(
                                               color: Colors.black.withOpacity(0.6),
@@ -261,15 +334,19 @@ class _recordWidgetState extends State<recordWidget> {
                                         ),
                                         child: IconButton(
                                           icon: Icon(
-                                            Icons.refresh,
-                                            size: 50,
+                                            Icons.clear_rounded,
+                                            size: isLandscape ? 40 : 50,
                                             color: Colors.black,
                                           ),
-                                          onPressed: _resetTimer,
+                                          onPressed: _cancelRecording,
                                         ),
                                       ),
-                                      Text('Reset',
-                                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                                      Text(
+                                        'Cancel',
+                                        style: TextStyle(
+                                          fontSize: isLandscape ? 14 : 16, 
+                                          fontWeight: FontWeight.bold
+                                        ),
                                       )
                                     ],
                                   ),
@@ -284,7 +361,7 @@ class _recordWidgetState extends State<recordWidget> {
                 ),
                 Container(
                   child: Container(
-                    height: height*0.15,
+                    height: isLandscape ? height * 0.18 : height * 0.15,
                     child: Center(
                       child: Container(
                         width: width * 0.4,
@@ -296,8 +373,6 @@ class _recordWidgetState extends State<recordWidget> {
                             behavior: HitTestBehavior.opaque, 
                             onHorizontalDragUpdate: (details) {
                               double positionX = details.localPosition.dx;
-                              double widthLimit = width * 0.4; 
-                              double heightLimit = height * 0.4; 
                             },
                             child: AudioWaveforms(
                               enableGesture: false,

@@ -1,30 +1,48 @@
 import 'dart:io';
 
-import 'package:agc_record/pages/fadepageroute.dart';
-import 'package:agc_record/widgets/bottomnav.dart';
+import 'package:agc_record/pages/fade_page_route.dart';
+import 'package:agc_record/widgets/bottom_nav.dart';
+import 'package:another_flushbar/flushbar.dart';
 import 'package:audio_waveforms/audio_waveforms.dart';
+import 'package:awesome_dialog/awesome_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 
-class shareWidget extends StatefulWidget {
+class RecordingResultsWidget extends StatefulWidget {
   final int selectedIndex;
-  const shareWidget({super.key, required this.selectedIndex});
+  const RecordingResultsWidget({super.key, required this.selectedIndex});
 
   @override
-  State<shareWidget> createState() => _shareWidgetState();
+  State<RecordingResultsWidget> createState() => _RecordingResultsWidgetState();
 }
 
-class _shareWidgetState extends State<shareWidget> {
+class _RecordingResultsWidgetState extends State<RecordingResultsWidget> with SingleTickerProviderStateMixin {
   List<FileSystemEntity> audioFiles = [];
   List<PlayerController> playerControllers = [];
   int? _playingIndex;
   bool isPaused = false;
   bool isLoading = true;
 
+  // untuk animasi icon
+  late AnimationController _animationController;
+  late Animation<double> _animation;
+
   @override
   void initState() {
     super.initState();
     _loadAudioFiles();
+        // Initialize AnimationController and Animation
+    _animationController = AnimationController(
+      duration: const Duration(seconds: 1),
+      vsync: this,
+    )..repeat(reverse: true); // Repeat the animation back and forth
+
+    _animation = Tween<double>(begin: 0, end: 1).animate(
+      CurvedAnimation(
+        parent: _animationController,
+        curve: Curves.easeInOut,
+      ),
+    );
   }
 
   @override
@@ -32,6 +50,7 @@ class _shareWidgetState extends State<shareWidget> {
     for (var controller in playerControllers) {
       controller.dispose();
     }
+    _animationController.dispose(); // Dispose AnimationController
     super.dispose();
   }
 
@@ -66,25 +85,10 @@ class _shareWidgetState extends State<shareWidget> {
       print("Error saat pemutaran suara: $e");
     }
   }
-  
 
   Future<void> deleteAudio(FileSystemEntity file, int index) async {
     try {
-      print("${file},${playerControllers}, ${index}");
-      if(_playingIndex == index){
-        await playerControllers[index].pausePlayer();
-        setState(() {
-          isPaused = true;
-        });
-      }else if (_playingIndex !=index && _playingIndex != null){
-        await playerControllers[_playingIndex!].pausePlayer();
-        setState(() {
-          isPaused = true;
-        });
-      }
-
       await file.delete();
-
       setState(() {
         audioFiles.removeAt(index);
         playerControllers.remove(playerControllers[index]);
@@ -98,6 +102,23 @@ class _shareWidgetState extends State<shareWidget> {
           page: BottomNavWidgets(initialIndex: widget.selectedIndex),
         ),
       );
+
+      // Show a Flushbar to notify successful deletion
+      Flushbar(
+        title: "File Deleted",
+        message: "Your recording has been successfully deleted.",
+        duration: Duration(seconds: 1), // Increased duration to ensure visibility
+        backgroundColor: Colors.green,
+        icon: Icon(
+          Icons.check_circle,
+          color: Colors.white,
+        ),
+        flushbarPosition: FlushbarPosition.TOP,
+        flushbarStyle: FlushbarStyle.FLOATING,
+        margin: EdgeInsets.all(8),
+        borderRadius: BorderRadius.circular(8),
+      )..show(context);
+
     } catch (e) {
       print("Error saat menghapus file: $e");
     }
@@ -138,17 +159,74 @@ class _shareWidgetState extends State<shareWidget> {
     }
   }
 
+  void _showConfirmDelete(BuildContext context, FileSystemEntity file, int index) async {
+    if(_playingIndex == index){
+      await playerControllers[index].pausePlayer();
+      setState(() {
+        isPaused = true;
+      });
+    }else if (_playingIndex !=index && _playingIndex != null){
+      await playerControllers[_playingIndex!].pausePlayer();
+      setState(() {
+        isPaused = true;
+      });
+    }
+    
+    AwesomeDialog(
+      context: context,
+      customHeader: AnimatedBuilder(
+        animation: _animationController,
+        builder: (context, child) {
+          // Determine colors based on the animation value
+          final isDeleteIcon = _animation.value < 0.5;
+          final iconColor = isDeleteIcon ? Colors.red : Colors.deepPurple;
+          final borderColor = isDeleteIcon ? Colors.red : Colors.deepPurple;
+
+          return Container(
+            decoration: BoxDecoration(
+              color: Colors.transparent, // No background color
+              borderRadius: BorderRadius.circular(50), // Border radius for rounded corners
+              border: Border.all(
+                color: borderColor, // Border color based on the icon
+                width: 2, // Border width
+              ),
+            ),
+            padding: const EdgeInsets.all(8), // Padding around the icon
+            child: Icon(
+              isDeleteIcon ? Icons.delete : Icons.question_mark_rounded,
+              color: iconColor, // Icon color based on the icon
+              size: 50,
+            ),
+          );
+        },
+      ),
+      animType: AnimType.scale,
+      dismissOnTouchOutside: false,
+      title: 'Delete Audio',
+      desc: "Are you sure you want to delete this audio?",
+      btnOkText: "Yes",
+      btnCancelOnPress: () {},
+      btnOkOnPress: () async {
+        deleteAudio(file, index);
+      },
+    ).show();
+  }
+
   @override
   Widget build(BuildContext context) {
+    var height = MediaQuery.of(context).size.height;
+    var width = MediaQuery.of(context).size.width;
+    var isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.blueAccent,
         title: const Text(
-          'Share',
+          'Recording Results',
           style: TextStyle(
             color: Colors.white,
           ),
         ),
+        leading: null,
       ),
       body: SafeArea( 
         child: isLoading
@@ -158,24 +236,58 @@ class _shareWidgetState extends State<shareWidget> {
           : audioFiles.isEmpty
           ? Center(
               child: Container(
-                width: MediaQuery.of(context).size.width*0.5,
-                height: MediaQuery.of(context).size.height*0.15,
+                width: width*0.5,
+                height: isLandscape ? height * 0.25 : height * 0.15,
                 child: Opacity(
-                  opacity: 0.5,
+                  opacity: 0.3,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      Icon(
-                        Icons.cloud_off_rounded,
-                        size: 100,
+                      AnimatedBuilder(
+                        animation: _animationController,
+                        builder: (context, child) {
+                          // Determine colors based on the animation value
+                          final isAnimatedIcon = _animation.value < 0.5;
+                          final iconColor = isAnimatedIcon ? Colors.blue : Colors.deepPurple;
+                          final borderColor = isAnimatedIcon ? Colors.blue : Colors.deepPurple;
+                          final textColor = isAnimatedIcon ? Colors.blue : Colors.deepPurple;
+
+                          return Container(
+                            decoration: BoxDecoration(
+                              color: Colors.transparent, // No background color
+                              borderRadius: BorderRadius.circular(50), // Border radius for rounded corners
+                              border: Border.all(
+                                color: borderColor, // Border color based on the icon
+                                width: 2, // Border width
+                              ),
+                            ),
+                            padding: isLandscape ? const EdgeInsets.all(10) : const EdgeInsets.all(20), // Padding around the icon
+                            child: Icon(
+                              isAnimatedIcon ? Icons.search_off_rounded : Icons.search,
+                              color: iconColor, // Icon color based on the icon
+                              size: isLandscape ? 40 : 50,
+                            ),
+                          );
+                        },
                       ),
-                      Text(
-                        "Data Audio Kosong",
-                        style: TextStyle(
-                          color: Colors.grey,
-                          fontSize: 20
-                        ),
-                      )
+                      AnimatedBuilder(
+                        animation: _animationController,
+                        builder: (context, child) {
+                          // Determine colors based on the animation value
+                          final isAnimatedIcon = _animation.value < 0.5;
+                          final textColor = isAnimatedIcon ? Colors.blue : Colors.deepPurple;
+
+                          return Container(
+                            child: Text(
+                              "Blank Audio Data",
+                              style: TextStyle(
+                                color: textColor,
+                                fontSize: isLandscape ? 15 : 20
+                              ),
+                            ),
+                          );
+                        },
+                      ),
                     ],
                   ),
                 ),
@@ -226,7 +338,7 @@ class _shareWidgetState extends State<shareWidget> {
                             Expanded(
                               child: AudioFileWaveforms(
                                 playerController: playerController,
-                                size: Size(MediaQuery.of(context).size.width, 30),
+                                size: Size(width, 30),
                                 enableSeekGesture: true,
                                 // waveformData: [],
                                 waveformType: WaveformType.long,
@@ -250,7 +362,8 @@ class _shareWidgetState extends State<shareWidget> {
                             IconButton(
                               icon: const Icon(Icons.delete, color: Colors.red),
                               onPressed: () {
-                                deleteAudio(file, index);
+                                _showConfirmDelete(context, file, index);
+                                // deleteAudio(file, index);
                               },
                             ),
                           ],

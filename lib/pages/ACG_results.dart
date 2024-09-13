@@ -1,20 +1,20 @@
 import 'package:flutter/material.dart';
 
-class resultWidget extends StatefulWidget {
-  const resultWidget({super.key});
+class AgcResultsWidget extends StatefulWidget {
+  const AgcResultsWidget({super.key});
 
   @override
-  State<resultWidget> createState() => _resultWidgetState();
+  State<AgcResultsWidget> createState() => _AgcResultsWidgetState();
 }
 
-class _resultWidgetState extends State<resultWidget> {
+class _AgcResultsWidgetState extends State<AgcResultsWidget> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.blueAccent,
         title: Text(
-          'Result',
+          'AGC Results',
           style: TextStyle(
             color: Colors.white
           ),

@@ -1,5 +1,5 @@
 import 'package:agc_record/splash_screen.dart';
-import 'package:agc_record/widgets/bottomnav.dart';
+import 'package:agc_record/widgets/bottom_nav.dart';
 import 'package:flutter/material.dart';
 
 void main() {

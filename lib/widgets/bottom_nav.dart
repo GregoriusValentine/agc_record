@@ -1,6 +1,6 @@
-import 'package:agc_record/pages/record.dart';
-import 'package:agc_record/pages/result.dart';
-import 'package:agc_record/pages/share.dart';
+import 'package:agc_record/pages/recording.dart';
+import 'package:agc_record/pages/ACG_results.dart';
+import 'package:agc_record/pages/recording_results.dart';
 import 'package:flutter/material.dart';
 
 class BottomNavWidgets extends StatefulWidget {
@@ -50,9 +50,9 @@ class _BottomNavWidgetsState extends State<BottomNavWidgets> {
         controller: pageController,
         physics: const NeverScrollableScrollPhysics(),
         children: [
-          recordWidget(),
-          shareWidget(selectedIndex: 1),
-          resultWidget()
+          RecordingWidget(),
+          RecordingResultsWidget(selectedIndex: 1),
+          AgcResultsWidget()
         ],
       ),
       bottomNavigationBar: NavigationBar(
@@ -66,7 +66,7 @@ class _BottomNavWidgetsState extends State<BottomNavWidgets> {
               Icons.mic_none_rounded,
               color: Colors.green,
             ),
-            label: 'Record',
+            label: 'Recording',
           ),
           NavigationDestination(
             selectedIcon: Icon(
@@ -76,7 +76,7 @@ class _BottomNavWidgetsState extends State<BottomNavWidgets> {
               Icons.cloud_upload_outlined,
               color: Colors.green,
             ),
-            label: 'Result Record',
+            label: 'Recording Results',
           ),
           NavigationDestination(
             selectedIcon: Icon(
@@ -86,7 +86,7 @@ class _BottomNavWidgetsState extends State<BottomNavWidgets> {
               Icons.my_library_music_outlined,
               color: Colors.green,
             ),
-            label: 'Result AGC',
+            label: 'AGC Results',
           ),
         ], 
       ),
