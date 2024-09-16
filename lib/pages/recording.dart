@@ -154,7 +154,7 @@ class _RecordingWidgetState extends State<RecordingWidget> {
     try {
       if (_isRecording) {
         await _recorderController.stop();
-        final pathAudio = await audioRecord.stop();
+        await audioRecord.stop();
         _timer?.cancel();
         
         setState(() {
