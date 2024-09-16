@@ -1,6 +1,7 @@
 import 'package:agc_record/pages/recording.dart';
 import 'package:agc_record/pages/agc_results.dart';
 import 'package:agc_record/pages/recording_results.dart';
+import 'package:another_flushbar/flushbar.dart';
 import 'package:flutter/material.dart';
 
 class BottomNavWidgets extends StatefulWidget {
@@ -14,6 +15,7 @@ class BottomNavWidgets extends StatefulWidget {
 class _BottomNavWidgetsState extends State<BottomNavWidgets> {
   late int selectedIndex;
   late PageController pageController;
+  bool _isRecording = false;
 
 
   @override
@@ -21,7 +23,6 @@ class _BottomNavWidgetsState extends State<BottomNavWidgets> {
     super.initState();
     selectedIndex = widget.initialIndex;
     pageController = PageController(initialPage: selectedIndex);
-    // Listen to page changes to update selected index
     pageController.addListener(() {
       setState(() {
         selectedIndex = pageController.page!.toInt();
@@ -35,12 +36,34 @@ class _BottomNavWidgetsState extends State<BottomNavWidgets> {
     super.dispose();
   }
 
-  // Function pindah tab
   void onTapped(int index) {
-    setState((){
-      selectedIndex = index;
+    if(_isRecording){
+      Flushbar(
+        title: "Still Recording",
+        message: "If you want to switch pages, finish recording first.",
+        duration: const Duration(seconds: 2), // Increased duration to ensure visibility
+        backgroundColor: Colors.green,
+        icon: const Icon(
+          Icons.av_timer_rounded,
+          color: Colors.white,
+        ),
+        flushbarPosition: FlushbarPosition.TOP,
+        flushbarStyle: FlushbarStyle.FLOATING,
+        margin: const EdgeInsets.all(8),
+        borderRadius: BorderRadius.circular(8),
+      ).show(context);
+    }else{
+      setState((){
+        selectedIndex = index;
+      });
+      pageController.jumpToPage(index);
+    }
+  }
+
+  void _updateRecordingStatus(bool isRecording) {
+    setState(() {
+      _isRecording = isRecording;
     });
-    pageController.jumpToPage(index);
   }
 
   @override
@@ -49,10 +72,10 @@ class _BottomNavWidgetsState extends State<BottomNavWidgets> {
       body: PageView(
         controller: pageController,
         physics: const NeverScrollableScrollPhysics(),
-        children: const [
-          RecordingWidget(),
-          RecordingResultsWidget(selectedIndex: 1),
-          AgcResultsWidget()
+        children: [
+          RecordingWidget(onRecordingStatusChange: _updateRecordingStatus),
+          const RecordingResultsWidget(selectedIndex: 1),
+          const AgcResultsWidget()
         ],
       ),
       bottomNavigationBar: NavigationBar(

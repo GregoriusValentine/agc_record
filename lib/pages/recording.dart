@@ -10,7 +10,8 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:record/record.dart';
 
 class RecordingWidget extends StatefulWidget {
-  const RecordingWidget({super.key});
+  final Function(bool) onRecordingStatusChange;
+  const RecordingWidget({super.key, required this.onRecordingStatusChange});
   @override
   State<RecordingWidget> createState() => _RecordingWidgetState();
 }
@@ -108,6 +109,7 @@ class _RecordingWidgetState extends State<RecordingWidget> {
             _isPaused = false;
             _seconds = 0;
             audioPath = path!;
+            widget.onRecordingStatusChange(false);
           });
           if (mounted) {
             _showRecordingSavedFlushbar(context);
@@ -140,6 +142,7 @@ class _RecordingWidgetState extends State<RecordingWidget> {
             await audioRecord.start(const RecordConfig(), path: audioPath);
             setState(() {
               _isRecording = true;
+              widget.onRecordingStatusChange(true);
             });
           }
         }
@@ -161,6 +164,7 @@ class _RecordingWidgetState extends State<RecordingWidget> {
           _isRecording = false;
           _isPaused = false;
           _seconds = 0;
+          widget.onRecordingStatusChange(false);
         });
 
         await audioRecord.cancel();

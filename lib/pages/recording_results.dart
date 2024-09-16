@@ -32,11 +32,10 @@ class _RecordingResultsWidgetState extends State<RecordingResultsWidget> with Si
   void initState() {
     super.initState();
     _loadAudioFiles();
-        // Initialize AnimationController and Animation
     _animationController = AnimationController(
       duration: const Duration(seconds: 1),
       vsync: this,
-    )..repeat(reverse: true); // Repeat the animation back and forth
+    )..repeat(reverse: true);
 
     _animation = Tween<double>(begin: 0, end: 1).animate(
       CurvedAnimation(
@@ -387,7 +386,6 @@ class _RecordingResultsWidgetState extends State<RecordingResultsWidget> with Si
                               icon: const Icon(Icons.delete, color: Colors.red),
                               onPressed: () {
                                 _showConfirmDelete(context, file, index);
-                                // deleteAudio(file, index);
                               },
                             ),
                           ],
