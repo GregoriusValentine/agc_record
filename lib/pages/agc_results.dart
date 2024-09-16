@@ -13,7 +13,7 @@ class _AgcResultsWidgetState extends State<AgcResultsWidget> {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.blueAccent,
-        title: Text(
+        title: const Text(
           'AGC Results',
           style: TextStyle(
             color: Colors.white

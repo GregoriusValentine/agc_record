@@ -14,7 +14,7 @@ class SplashScreen extends StatelessWidget {
           'assets/animation/Animation - 1725429155564.json'
         ),
       ),
-      nextScreen: BottomNavWidgets(),
+      nextScreen: const BottomNavWidgets(),
       duration: 3000,
       backgroundColor: const Color.fromARGB(255, 5, 95, 180),
     );

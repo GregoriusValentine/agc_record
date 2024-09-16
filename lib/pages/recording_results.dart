@@ -6,6 +6,7 @@ import 'package:another_flushbar/flushbar.dart';
 import 'package:audio_waveforms/audio_waveforms.dart';
 import 'package:awesome_dialog/awesome_dialog.dart';
 import 'package:flutter/material.dart';
+import 'package:logger/logger.dart';
 import 'package:path_provider/path_provider.dart';
 
 class RecordingResultsWidget extends StatefulWidget {
@@ -56,21 +57,17 @@ class _RecordingResultsWidgetState extends State<RecordingResultsWidget> with Si
 
   Future<void> playAudio(String path, int index) async {
     try {
-      print("${index}");
       if(_playingIndex == index && isPaused){
-        print('ini if yang pertama: ${_playingIndex == index && isPaused}, ${_playingIndex}, ${isPaused}');
         await playerControllers[index].startPlayer(finishMode: FinishMode.loop);
         setState(() {
           isPaused = false;
         });
       } else if (_playingIndex == index){
-        print('ini else if yang pertama: ${_playingIndex}, ${isPaused}');
         await playerControllers[index].pausePlayer();
         setState(() {
           isPaused = true;
         });
       }else{
-        print('ini else : ${_playingIndex}, ${isPaused}, ${_playingIndex != index && _playingIndex != null}');
         if(_playingIndex != index && _playingIndex != null){
           await playerControllers[_playingIndex!].pausePlayer();
         }
@@ -82,45 +79,45 @@ class _RecordingResultsWidgetState extends State<RecordingResultsWidget> with Si
         await playerControllers[index].startPlayer(finishMode: FinishMode.loop);
       }
     } catch (e) {
-      print("Error saat pemutaran suara: $e");
+      var logger = Logger();
+      logger.e("Error log", error: e);
     }
   }
 
   Future<void> deleteAudio(FileSystemEntity file, int index) async {
     try {
       await file.delete();
-      setState(() {
-        audioFiles.removeAt(index);
-        playerControllers.remove(playerControllers[index]);
-        _playingIndex = null;
-        isPaused = false;
-      });
-
-      Navigator.pushReplacement(
-        context,
-        FadePageRoute(
-          page: BottomNavWidgets(initialIndex: widget.selectedIndex),
-        ),
-      );
-
-      // Show a Flushbar to notify successful deletion
-      Flushbar(
-        title: "File Deleted",
-        message: "Your recording has been successfully deleted.",
-        duration: Duration(seconds: 1), // Increased duration to ensure visibility
-        backgroundColor: Colors.green,
-        icon: Icon(
-          Icons.check_circle,
-          color: Colors.white,
-        ),
-        flushbarPosition: FlushbarPosition.TOP,
-        flushbarStyle: FlushbarStyle.FLOATING,
-        margin: EdgeInsets.all(8),
-        borderRadius: BorderRadius.circular(8),
-      )..show(context);
-
+      if (mounted) {
+        setState(() {
+          audioFiles.removeAt(index);
+          playerControllers.remove(playerControllers[index]);
+          _playingIndex = null;
+          isPaused = false;
+        }); 
+        Navigator.pushReplacement(
+          context,
+          FadePageRoute(
+            page: BottomNavWidgets(initialIndex: widget.selectedIndex),
+          ),
+        );
+        Flushbar(
+          title: "File Deleted",
+          message: "Your recording has been successfully deleted.",
+          duration: const Duration(seconds: 1), // Increased duration to ensure visibility
+          backgroundColor: Colors.green,
+          icon: const Icon(
+            Icons.check_circle,
+            color: Colors.white,
+          ),
+          flushbarPosition: FlushbarPosition.TOP,
+          flushbarStyle: FlushbarStyle.FLOATING,
+          margin: const EdgeInsets.all(8),
+          borderRadius: BorderRadius.circular(8),
+        ).show(context);
+      }
     } catch (e) {
-      print("Error saat menghapus file: $e");
+      var logger = Logger();
+      logger.e("Error log", error: e);
     }
   }
 
@@ -147,19 +144,24 @@ class _RecordingResultsWidgetState extends State<RecordingResultsWidget> with Si
           isLoading = false; 
         });
       } else {
+        if(mounted){
+          setState(() {
+            isLoading = false;
+          });
+        }
+      }
+    } catch (e) {
+      var logger = Logger();
+      logger.e("Error log", error: e);
+      if(mounted){
         setState(() {
           isLoading = false;
         });
       }
-    } catch (e) {
-      print("Error saat memuat file audio: $e");
-      setState(() {
-        isLoading = false;
-      });
     }
   }
 
-  void _showConfirmDelete(BuildContext context, FileSystemEntity file, int index) async {
+  void _showConfirmDelete(context, FileSystemEntity file, int index) async {
     if(_playingIndex == index){
       await playerControllers[index].pausePlayer();
       setState(() {
@@ -212,6 +214,31 @@ class _RecordingResultsWidgetState extends State<RecordingResultsWidget> with Si
     ).show();
   }
 
+  Future <void> shareAudio(BuildContext context, PlayerController controller, FileSystemEntity file, int index) async {
+    try {
+          int indexController = playerControllers.indexOf(controller);
+    final dataWave = controller.waveformData;
+
+    // Simpan hasil analisis dalam Map
+    Map<String, dynamic> audioAnalysis = {
+      'waveform': dataWave,
+      'duration': dataWave.length / 44100, // Assuming 44100 Hz sample rate
+    };
+
+    AwesomeDialog(
+      context: context,
+      dialogType: DialogType.noHeader,
+      animType: AnimType.scale,
+      dismissOnTouchOutside: true,
+      title: 'Share',
+      desc:  "Controller: $indexController\nFile: ${file.path}\nIndex: $index\nWaveform: ${audioAnalysis['waveform']}\nDurasi: ${audioAnalysis['duration']} detik",
+    ).show();
+    } catch (e) {
+      var logger = Logger();
+      logger.e("Error log", error: e);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     var height = MediaQuery.of(context).size.height;
@@ -230,12 +257,12 @@ class _RecordingResultsWidgetState extends State<RecordingResultsWidget> with Si
       ),
       body: SafeArea( 
         child: isLoading
-          ? Center(
+          ? const Center(
               child: CircularProgressIndicator(), // Indikator loading
             )
           : audioFiles.isEmpty
           ? Center(
-              child: Container(
+              child: SizedBox(
                 width: width*0.5,
                 height: isLandscape ? height * 0.25 : height * 0.15,
                 child: Opacity(
@@ -250,7 +277,6 @@ class _RecordingResultsWidgetState extends State<RecordingResultsWidget> with Si
                           final isAnimatedIcon = _animation.value < 0.5;
                           final iconColor = isAnimatedIcon ? Colors.blue : Colors.deepPurple;
                           final borderColor = isAnimatedIcon ? Colors.blue : Colors.deepPurple;
-                          final textColor = isAnimatedIcon ? Colors.blue : Colors.deepPurple;
 
                           return Container(
                             decoration: BoxDecoration(
@@ -277,13 +303,11 @@ class _RecordingResultsWidgetState extends State<RecordingResultsWidget> with Si
                           final isAnimatedIcon = _animation.value < 0.5;
                           final textColor = isAnimatedIcon ? Colors.blue : Colors.deepPurple;
 
-                          return Container(
-                            child: Text(
-                              "Blank Audio Data",
-                              style: TextStyle(
-                                color: textColor,
-                                fontSize: isLandscape ? 15 : 20
-                              ),
+                          return Text(
+                            "Blank Audio Data",
+                            style: TextStyle(
+                              color: textColor,
+                              fontSize: isLandscape ? 15 : 20
                             ),
                           );
                         },
@@ -355,7 +379,7 @@ class _RecordingResultsWidgetState extends State<RecordingResultsWidget> with Si
                             IconButton(
                               icon: const Icon(Icons.share, color: Colors.blue),
                               onPressed: () {
-                                // shareAudio(File(file.path)); // Share audio file
+                                shareAudio(context, playerController, file, index); // Share audio file
                               },
                             ),
                             // Icon delete

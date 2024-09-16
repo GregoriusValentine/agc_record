@@ -3,8 +3,8 @@ import 'dart:io';
 import 'package:another_flushbar/flushbar.dart';
 import 'package:flutter/material.dart';
 import 'package:audio_waveforms/audio_waveforms.dart';
-import 'package:image_gallery_saver/image_gallery_saver.dart';
 import 'package:intl/intl.dart';
+import 'package:logger/logger.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:record/record.dart';
@@ -66,66 +66,17 @@ class _RecordingWidgetState extends State<RecordingWidget> {
     Flushbar(
       title: "Saved Recordings",
       message: "Your recording has been successfully saved.",
-      duration: Duration(seconds: 1),
+      duration: const Duration(seconds: 1),
       backgroundColor: Colors.green,
-      icon: Icon(
+      icon: const Icon(
         Icons.check_circle,
         color: Colors.white,
       ),
       flushbarPosition: FlushbarPosition.TOP,
       flushbarStyle: FlushbarStyle.FLOATING,
-      margin: EdgeInsets.all(8),
+      margin: const EdgeInsets.all(8),
       borderRadius: BorderRadius.circular(8),
-    )..show(context);
-  }
-
-  Future<void> _startOrStopRecording() async {
-    try{
-      if(await audioRecord.hasPermission()){
-        if (_isRecording) {
-          await _recorderController.stop();
-          String? path = await audioRecord.stop();
-          _timer?.cancel();
-          setState(() {
-            _isRecording = false;
-            _isPaused = false;
-            _seconds = 0;
-            audioPath = path!;
-          });
-          _showRecordingSavedFlushbar(context);
-        } else {
-          if(await Permission.storage.request().isGranted){
-            final directory = await getExternalStorageDirectory();
-            final recordingsDir = Directory('${directory!.path}/MyRecordings');
-            if (!await recordingsDir.exists()) {
-              await recordingsDir.create(recursive: true);
-              print('Directory created: ${recordingsDir.path}');
-            } else {
-              print('Directory already exists: ${recordingsDir.path}');
-            }
-            final now = DateTime.now();
-            final formattedTime = DateFormat('hh-mm-ss-a').format(now);
-            final incrementedFileName = await _getIncrementedFileName(recordingsDir);
-            audioPath = '${recordingsDir.path}/${incrementedFileName}_Time-${formattedTime}.wav';
-            print('Recording path: $audioPath');
-            _timer = Timer.periodic(Duration(seconds: 1), (timer) {
-              if (!_isPaused) {
-                setState(() {
-                  _seconds++;
-                });
-              }
-            });
-            await _recorderController.record();
-            await audioRecord.start(const RecordConfig(), path: audioPath);
-            setState(() {
-              _isRecording = true;
-            });
-          }
-        }
-      }
-    }catch(e){
-      print("Error Recording: $e");
-    }
+    ).show(context);
   }
 
   void _pauseOrResumeRecording() async {
@@ -144,44 +95,95 @@ class _RecordingWidgetState extends State<RecordingWidget> {
     }
   }
 
+   Future<void> _startOrStopRecording() async {
+    var logger = Logger();
+    try{
+      if(await audioRecord.hasPermission()){
+        if (_isRecording) {
+          await _recorderController.stop();
+          String? path = await audioRecord.stop();
+          _timer?.cancel();
+          setState(() {
+            _isRecording = false;
+            _isPaused = false;
+            _seconds = 0;
+            audioPath = path!;
+          });
+          if (mounted) {
+            _showRecordingSavedFlushbar(context);
+          }
+        } else {
+          if(await Permission.storage.request().isGranted){
+            final directory = await getExternalStorageDirectory();
+            final recordingsDir = Directory('${directory!.path}/MyRecordings');
+            if (!await recordingsDir.exists()) {
+              await recordingsDir.create(recursive: true);
+              logger.d("Directory created: ${recordingsDir.path}");
+            } else {
+              logger.d("Directory already exists: ${recordingsDir.path}");
+            }
+            final now = DateTime.now();
+            final formattedTime = DateFormat('hh-mm-ss-a').format(now);
+            final incrementedFileName = await _getIncrementedFileName(recordingsDir);
+            final audioPath = '${recordingsDir.path}/${incrementedFileName}_Time-$formattedTime.wav';
+            logger.d("Recording path: $audioPath");
+            _timer = Timer.periodic(
+              const Duration(seconds: 1),
+              (timer) {
+                if (!_isPaused) {
+                  setState(() {
+                    _seconds++;
+                  });
+              }
+            });
+            await _recorderController.record();
+            await audioRecord.start(const RecordConfig(), path: audioPath);
+            setState(() {
+              _isRecording = true;
+            });
+          }
+        }
+      }
+    }catch(e){
+      logger.e("Error log", error: e);
+    }
+  }
+
   Future<void> _cancelRecording() async {
+    var logger = Logger();
     try {
       if (_isRecording) {
-        // Stop the recording and dispose resources
         await _recorderController.stop();
-        await audioRecord.stop();
+        final pathAudio = await audioRecord.stop();
         _timer?.cancel();
         
-        // Reset state
         setState(() {
           _isRecording = false;
           _isPaused = false;
           _seconds = 0;
         });
 
-        // Delete the temporary file if it exists
-        if (audioPath.isNotEmpty && File(audioPath).existsSync()) {
-          await File(audioPath).delete();
-        }
+        await audioRecord.cancel();
 
-        // Show flushbar to inform the user that the recording has been canceled
-        Flushbar(
-          title: "Recording Canceled",
-          message: "Your recording has been canceled and is not saved.",
-          duration: Duration(seconds: 1),
-          backgroundColor: Colors.red,
-          icon: Icon(
-            Icons.cancel,
-            color: Colors.white,
-          ),
-          flushbarPosition: FlushbarPosition.TOP,
-          flushbarStyle: FlushbarStyle.FLOATING,
-          margin: EdgeInsets.all(8),
-          borderRadius: BorderRadius.circular(8),
-        )..show(context);
+        if (mounted) {
+          Flushbar(
+            title: "Recording Canceled",
+            message: "Your recording has been canceled and is not saved.",
+            duration: const Duration(seconds: 1),
+            backgroundColor: Colors.red,
+            icon: const Icon(
+              Icons.cancel,
+              color: Colors.white,
+            ),
+            flushbarPosition: FlushbarPosition.TOP,
+            flushbarStyle: FlushbarStyle.FLOATING,
+            margin: const EdgeInsets.all(8),
+            borderRadius: BorderRadius.circular(8),
+          ).show(context);
+        }
       }
     } catch (e) {
-      print("Error saat membatalkan rekaman: $e");
+      logger.e("Error log", error: e);
     }
   }
 
@@ -200,197 +202,195 @@ class _RecordingWidgetState extends State<RecordingWidget> {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.blueAccent,
-        title: Text(
+        title: const Text(
           'Recording',
           style: TextStyle(
             color: Colors.white
           ),
         ),
       ),
-      body: Container(
-        child: Center(
-          child: Container(
-            height: isLandscape ? height * 0.8 : height * 0.5,
-            child: Column(
-              children: [
-                Container(
-                  child: Container(
-                    height: isLandscape ? height * 0.2 : height * 0.18,
-                    child: Center(
-                      child: Container(
-                        child: Text(
-                          _formatTime(_seconds),
-                          style: TextStyle(
-                            fontSize: isLandscape ? 40 : 50,
-                            fontWeight: FontWeight.bold
-                          ),
+      body: Center(
+        child: SizedBox(
+          height: isLandscape ? height * 0.8 : height * 0.5,
+          child: Column(
+            children: [
+              SizedBox(
+                child: SizedBox(
+                  height: isLandscape ? height * 0.2 : height * 0.18,
+                  child: Center(
+                    child: SizedBox(
+                      child: Text(
+                        _formatTime(_seconds),
+                        style: TextStyle(
+                          fontSize: isLandscape ? 40 : 50,
+                          fontWeight: FontWeight.bold
                         ),
                       ),
                     ),
                   ),
                 ),
-                Container(
-                  height: isLandscape ? height * 0.2 : height * 0.14,
-                  child: Center(
-                    child: Column(
-                      children: [
-                        Center(
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Column(
-                                children: [
-                                  Ink(
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      color: Color.fromARGB(255, 250, 103, 66),
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: Colors.black.withOpacity(0.6),
-                                          spreadRadius: 0,
-                                          blurRadius: 6,
-                                          offset: Offset(1, 1),
-                                        ),
-                                      ],
-                                    ),
-                                    child: IconButton(
-                                      icon: Icon(
-                                        _isRecording
-                                            ? (_isPaused
-                                                ? Icons.play_arrow
-                                                : Icons.pause)
-                                            : Icons.mic_rounded,
-                                        size: isLandscape ? 40 : 50,
-                                        color: Colors.black,
+              ),
+              SizedBox(
+                height: isLandscape ? height * 0.2 : height * 0.14,
+                child: Center(
+                  child: Column(
+                    children: [
+                      Center(
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Column(
+                              children: [
+                                Ink(
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: const Color.fromARGB(255, 250, 103, 66),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withOpacity(0.6),
+                                        spreadRadius: 0,
+                                        blurRadius: 6,
+                                        offset: const Offset(1, 1),
                                       ),
-                                      onPressed: _isRecording
-                                          ? _pauseOrResumeRecording
-                                          : _startOrStopRecording,
-                                    ),
-                                  ),
-                                  Text(
-                                    _isRecording
-                                        ? (_isPaused ? 'Resume' : 'Pause')
-                                        : 'Start',
-                                    style: TextStyle(
-                                      fontSize: isLandscape ? 14 : 16, 
-                                      fontWeight: FontWeight.bold
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              SizedBox(width: 20),
-                              if (_isRecording)
-                              Row(
-                                children: [
-                                  Column(
-                                    children: [
-                                      Ink(
-                                        decoration: BoxDecoration(
-                                          shape: BoxShape.circle,
-                                          color: Colors.green,
-                                          boxShadow: [
-                                            BoxShadow(
-                                              color: Colors.black.withOpacity(0.6),
-                                              spreadRadius: 0,
-                                              blurRadius: 6,
-                                              offset: Offset(1, 1),
-                                            ),
-                                          ],
-                                        ),
-                                        child: IconButton(
-                                          icon: Icon(
-                                            Icons.check_rounded,
-                                            size: isLandscape ? 40 : 50,
-                                            color: Colors.black,
-                                          ),
-                                          onPressed: _startOrStopRecording,
-                                        ),
-                                      ),
-                                      Text(
-                                        'Saved',
-                                        style: TextStyle(
-                                          fontSize: isLandscape ? 14 : 16, 
-                                          fontWeight: FontWeight.bold
-                                        ),
-                                      )
                                     ],
                                   ),
-                                  SizedBox(width: 20),
-                                  Column(
-                                    children: [
-                                      Ink(
-                                        decoration: BoxDecoration(
-                                          shape: BoxShape.circle,
-                                          color: Colors.red,
-                                          boxShadow: [
-                                            BoxShadow(
-                                              color: Colors.black.withOpacity(0.6),
-                                              spreadRadius: 0,
-                                              blurRadius: 6,
-                                              offset: Offset(1, 1),
-                                            ),
-                                          ],
-                                        ),
-                                        child: IconButton(
-                                          icon: Icon(
-                                            Icons.clear_rounded,
-                                            size: isLandscape ? 40 : 50,
-                                            color: Colors.black,
-                                          ),
-                                          onPressed: _cancelRecording,
-                                        ),
-                                      ),
-                                      Text(
-                                        'Cancel',
-                                        style: TextStyle(
-                                          fontSize: isLandscape ? 14 : 16, 
-                                          fontWeight: FontWeight.bold
-                                        ),
-                                      )
-                                    ],
+                                  child: IconButton(
+                                    icon: Icon(
+                                      _isRecording
+                                          ? (_isPaused
+                                              ? Icons.play_arrow
+                                              : Icons.pause)
+                                          : Icons.mic_rounded,
+                                      size: isLandscape ? 40 : 50,
+                                      color: Colors.black,
+                                    ),
+                                    onPressed: _isRecording
+                                        ? _pauseOrResumeRecording
+                                        : _startOrStopRecording,
                                   ),
-                                ],
-                              ),
-                            ],
-                          ),
+                                ),
+                                Text(
+                                  _isRecording
+                                      ? (_isPaused ? 'Resume' : 'Pause')
+                                      : 'Start',
+                                  style: TextStyle(
+                                    fontSize: isLandscape ? 14 : 16, 
+                                    fontWeight: FontWeight.bold
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(width: 20),
+                            if (_isRecording)
+                            Row(
+                              children: [
+                                Column(
+                                  children: [
+                                    Ink(
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        color: Colors.green,
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color: Colors.black.withOpacity(0.6),
+                                            spreadRadius: 0,
+                                            blurRadius: 6,
+                                            offset: const Offset(1, 1),
+                                          ),
+                                        ],
+                                      ),
+                                      child: IconButton(
+                                        icon: Icon(
+                                          Icons.check_rounded,
+                                          size: isLandscape ? 40 : 50,
+                                          color: Colors.black,
+                                        ),
+                                        onPressed: _startOrStopRecording,
+                                      ),
+                                    ),
+                                    Text(
+                                      'Saved',
+                                      style: TextStyle(
+                                        fontSize: isLandscape ? 14 : 16, 
+                                        fontWeight: FontWeight.bold
+                                      ),
+                                    )
+                                  ],
+                                ),
+                                const SizedBox(width: 20),
+                                Column(
+                                  children: [
+                                    Ink(
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        color: Colors.red,
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color: Colors.black.withOpacity(0.6),
+                                            spreadRadius: 0,
+                                            blurRadius: 6,
+                                            offset: const Offset(1, 1),
+                                          ),
+                                        ],
+                                      ),
+                                      child: IconButton(
+                                        icon: Icon(
+                                          Icons.clear_rounded,
+                                          size: isLandscape ? 40 : 50,
+                                          color: Colors.black,
+                                        ),
+                                        onPressed: _cancelRecording,
+                                      ),
+                                    ),
+                                    Text(
+                                      'Cancel',
+                                      style: TextStyle(
+                                        fontSize: isLandscape ? 14 : 16, 
+                                        fontWeight: FontWeight.bold
+                                      ),
+                                    )
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ),
-                Container(
-                  child: Container(
-                    height: isLandscape ? height * 0.18 : height * 0.15,
-                    child: Center(
-                      child: Container(
-                        width: width * 0.4,
-                        height: height * 0.1,
-                        // color: Colors.grey,
-                        child: SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: GestureDetector(
-                            behavior: HitTestBehavior.opaque, 
-                            onHorizontalDragUpdate: (details) {
-                              double positionX = details.localPosition.dx;
-                            },
-                            child: AudioWaveforms(
-                              enableGesture: false,
-                              size: Size(width * 0.8, height * 0.1),
-                              recorderController: _recorderController,
-                              waveStyle: WaveStyle(
-                                waveColor: Colors.deepPurple,
-                                showMiddleLine: false,
-                              ),
+              ),
+              SizedBox(
+                child: SizedBox(
+                  height: isLandscape ? height * 0.18 : height * 0.15,
+                  child: Center(
+                    child: SizedBox(
+                      width: width * 0.4,
+                      height: height * 0.1,
+                      // color: Colors.grey,
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque, 
+                          onHorizontalDragUpdate: (details) { 
+                            details.localPosition.dx;
+                          },
+                          child: AudioWaveforms(
+                            enableGesture: false,
+                            size: Size(width * 0.8, height * 0.1),
+                            recorderController: _recorderController,
+                            waveStyle: const WaveStyle(
+                              waveColor: Colors.deepPurple,
+                              showMiddleLine: false,
                             ),
                           ),
-                        ), 
-                      ),
-                    ), 
-                  ),
+                        ),
+                      ), 
+                    ),
+                  ), 
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),

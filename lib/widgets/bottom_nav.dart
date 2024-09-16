@@ -1,5 +1,5 @@
 import 'package:agc_record/pages/recording.dart';
-import 'package:agc_record/pages/ACG_results.dart';
+import 'package:agc_record/pages/agc_results.dart';
 import 'package:agc_record/pages/recording_results.dart';
 import 'package:flutter/material.dart';
 
@@ -49,7 +49,7 @@ class _BottomNavWidgetsState extends State<BottomNavWidgets> {
       body: PageView(
         controller: pageController,
         physics: const NeverScrollableScrollPhysics(),
-        children: [
+        children: const [
           RecordingWidget(),
           RecordingResultsWidget(selectedIndex: 1),
           AgcResultsWidget()
@@ -59,7 +59,7 @@ class _BottomNavWidgetsState extends State<BottomNavWidgets> {
         indicatorColor: Colors.blue,
         selectedIndex: selectedIndex,
         onDestinationSelected: onTapped,
-        destinations: const <Widget>[
+        destinations: const <NavigationDestination>[
           NavigationDestination(
             selectedIcon: Icon(Icons.mic_rounded),
             icon: Icon(
