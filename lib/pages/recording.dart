@@ -139,7 +139,13 @@ class _RecordingWidgetState extends State<RecordingWidget> {
               }
             });
             await _recorderController.record();
-            await audioRecord.start(const RecordConfig(), path: audioPath);
+            await audioRecord.start(const   
+                RecordConfig(
+                encoder: AudioEncoder.wav,  // Menentukan encoder sebagai WAV
+                sampleRate: 44100,          // Contoh: bisa menyesuaikan sample rate jika diperlukan
+                bitRate: 128000,            // Contoh: menyesuaikan bit rate untuk kualitas yang diinginkan
+              ), path: audioPath
+            );
             setState(() {
               _isRecording = true;
               widget.onRecordingStatusChange(true);

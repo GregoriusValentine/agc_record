@@ -6,8 +6,13 @@ import 'package:another_flushbar/flushbar.dart';
 import 'package:audio_waveforms/audio_waveforms.dart';
 import 'package:awesome_dialog/awesome_dialog.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_ffmpeg/flutter_ffmpeg.dart';
+import 'package:flutter_fft/flutter_fft.dart';
+import 'package:http_parser/http_parser.dart';
+import 'package:just_audio/just_audio.dart';
 import 'package:logger/logger.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:http/http.dart' as http;
 
 class RecordingResultsWidget extends StatefulWidget {
   final int selectedIndex;
@@ -18,6 +23,7 @@ class RecordingResultsWidget extends StatefulWidget {
 }
 
 class _RecordingResultsWidgetState extends State<RecordingResultsWidget> with SingleTickerProviderStateMixin {
+  final FlutterFFmpeg _ffmpeg = FlutterFFmpeg();
   List<FileSystemEntity> audioFiles = [];
   List<PlayerController> playerControllers = [];
   int? _playingIndex;
@@ -43,6 +49,7 @@ class _RecordingResultsWidgetState extends State<RecordingResultsWidget> with Si
         curve: Curves.easeInOut,
       ),
     );
+
   }
 
   @override
@@ -213,29 +220,112 @@ class _RecordingResultsWidgetState extends State<RecordingResultsWidget> with Si
     ).show();
   }
 
-  Future <void> shareAudio(BuildContext context, PlayerController controller, FileSystemEntity file, int index) async {
-    try {
-          int indexController = playerControllers.indexOf(controller);
-    final dataWave = controller.waveformData;
+  Future<String> convertToWav(String inputPath) async {
+    final outputPath = inputPath.replaceAll(".mp3", ".wav"); // atau sesuaikan format input
+    await _ffmpeg.execute("-i $inputPath $outputPath");
+    return outputPath;
+  }
 
-    // Simpan hasil analisis dalam Map
-    Map<String, dynamic> audioAnalysis = {
-      'waveform': dataWave,
-      'duration': dataWave.length / 44100, // Assuming 44100 Hz sample rate
-    };
+  void _showConfirmShare(BuildContext context, FileSystemEntity file, int index) {
+  AwesomeDialog(
+    context: context,
+    animType: AnimType.scale,
+    dismissOnTouchOutside: false,
+    title: 'Share Audio',
+    desc: "Are you sure you want to share this audio?",
+    btnOkText: "Yes",
+    btnCancelOnPress: () {},
+    btnOkOnPress: () async {
+      // Ambil file dari audioFiles
+      final file = audioFiles[index];
 
-    AwesomeDialog(
-      context: context,
-      dialogType: DialogType.noHeader,
-      animType: AnimType.scale,
-      dismissOnTouchOutside: true,
-      title: 'Share',
-      desc:  "Controller: $indexController\nFile: ${file.path}\nIndex: $index\nWaveform: ${audioAnalysis['waveform']}\nDurasi: ${audioAnalysis['duration']} detik",
-    ).show();
-    } catch (e) {
-      var logger = Logger();
-      logger.e("Error log", error: e);
+      try {
+        // Konversi ke .wav
+        String wavFilePath = await convertToWav(file.path);
+        File wavFile = File(wavFilePath);
+
+        if (await wavFile.exists()) {
+          // Upload file jika ditemukan
+          await uploadAudioFile(wavFile);
+        } else {
+          print('File not found');
+        }
+      } catch (e) {
+        print('Error during upload: $e');
+      }
+    },
+  ).show();
+}
+
+Future<void> uploadAudioFile(File file) async {
+    var request = http.MultipartRequest(
+      'POST',
+      Uri.parse('http://agcrecord.batutech.cloud/upload-audio'),
+    );
+
+    // Ubah nama parameter di sini menjadi 'audio'
+    request.files.add(
+      await http.MultipartFile.fromPath(
+        'audio',  // Ubah 'file' menjadi 'audio'
+        file.path,
+        contentType: MediaType('audio', 'wav'),
+      ),
+    );
+
+    var startTime = DateTime.now();
+    var response = await request.send();
+    var endTime = DateTime.now();
+
+    var delay = endTime.difference(startTime).inMilliseconds;
+
+    if (response.statusCode == 200) {
+      final responseBody = await response.stream.bytesToString();
+      print('Upload successful: $responseBody');
+
+      Map<String, dynamic> jsonResponse = {
+        'test': 'True',
+        'code': '200',
+        'response': responseBody,
+        'delay': delay,
+      };
+
+      showUploadResult(jsonResponse);
+    } else {
+      final responseBody = await response.stream.bytesToString();
+      print('Upload failed with status: ${response.statusCode}, body: $responseBody');
+      
+      Map<String, dynamic> jsonResponse = {
+        'test': 'False',
+        'code': '400',
+        'response': 'Upload failed with status: ${response.statusCode}, body: $responseBody',
+        'delay': null,
+      };
+
+      showUploadResult(jsonResponse);
     }
+  }
+
+  void showUploadResult(Map<String, dynamic> response) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text("Upload To Cloud"),
+          content: Text(
+            'Testing: ${response['test']}\n'
+            'Code: ${response['code']}\n'
+            'Response: ${response['response']}\n'
+            'Delay: ${response['delay'] ?? 'N/A'} ms', // Menampilkan delay
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text("OK"),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   @override
@@ -378,10 +468,9 @@ class _RecordingResultsWidgetState extends State<RecordingResultsWidget> with Si
                             IconButton(
                               icon: const Icon(Icons.share, color: Colors.blue),
                               onPressed: () {
-                                shareAudio(context, playerController, file, index); // Share audio file
+                                _showConfirmShare(context, file, index); // Memanggil dialog konfirmasi
                               },
                             ),
-                            // Icon delete
                             IconButton(
                               icon: const Icon(Icons.delete, color: Colors.red),
                               onPressed: () {

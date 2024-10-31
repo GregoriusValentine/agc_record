@@ -20,7 +20,12 @@ dependencies:
   awesome_dialog: ^3.2.1
   logger: ^2.4.0
   audioplayers: ^6.1.0
+  just_audio: ^0.9.40
+  flutter_ffmpeg: ^0.4.2
   flutter_fft: ^1.0.2+6
+  just_waveform: ^0.0.5
+  http: ^1.2.2
+  http_parser: ^4.0.2
   animated_splash_screen:
   flutter_launcher_icons: "^0.13.1"
 
