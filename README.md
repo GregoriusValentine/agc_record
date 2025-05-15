@@ -39,7 +39,8 @@ project_root/
   <img src="screenshots/Screenshot-5.jpg" alt="Hasil Rekaman Suara" width="200" />
   <img src="screenshots/Screenshot-6.jpg" alt="Hasil Pengelolaan AGC" width="200" />
 </div>
-> Untuk Menampilkan Hasil Audio Secara Detail dapat mengakses <a href="https://agcrecord.batutech.cloud/" target="_blank">Hasil Pemrosesan Audio</a>
+> Untuk melihat hasil pemrosesan audio secara detail, silakan akses melalui tautan berikut:  
+> [Hasil Pemrosesan Audio](https://agcrecord.batutech.cloud/)
 
 ## 🔁Alur Fungsional Menu
 
