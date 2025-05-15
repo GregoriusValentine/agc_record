@@ -37,9 +37,11 @@ project_root/
  2. Pengriman Suara Audio Menuju Cloud Server
  4. Hasil Pengelolaan Audio
 ## Tampilan Aplikasi
-<p align="center"><img src="screenshots/Screenshot-1.jpg" alt="Perekaman Suara" width="200" style="margin-right: 10px"/></p>
-<p align="center"><img src="screenshots/Screenshot-5.jpg" alt="Hasil Rekaman Suara" width="200"/></p>
-<p align="center"><img src="screenshots/Screenshot-6.jpg" alt="Hasil Pengelolaan AGC" width="200" style="margin-right: 10px"/> </p>
+<div style="display: flex; justify-content: center; gap: 10px;">
+  <img src="screenshots/Screenshot-1.jpg" alt="Perekaman Suara" width="200" />
+  <img src="screenshots/Screenshot-5.jpg" alt="Hasil Rekaman Suara" width="200" />
+  <img src="screenshots/Screenshot-6.jpg" alt="Hasil Pengelolaan AGC" width="200" />
+</div>
 > Untuk Menampilkan Hasil Audio Secara Detail dapat mengakses <a href="https://agcrecord.batutech.cloud/" target="_blank">Hasil Pemrosesan Audio</a>
 
 ## 🔁Alur Fungsional Menu
