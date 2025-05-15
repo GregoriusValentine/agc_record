@@ -12,25 +12,22 @@ Aplikasi Perekaman Suara, menggunakan algoritma Automatic Gain Control sebagai p
 project_root/
 ├── assets/
 │   ├── animation/
-│	  ├── images/                    
-│	      ├── logo_agc_record.png        # GambarLogo Aplikasi
-│	      ├── logo_agc_record-2.png      # ...
-│	      ├── logo_agc_record-3.png      # ...
-├── ...
-├── ...
+│   └── images/                    
+│       ├── logo_agc_record.png       # Gambar Logo Aplikasi
+│       ├── logo_agc_record-2.png     # ...
+│       └── logo_agc_record-3.png     # ...
 ├── lib/
 │   ├── pages/
-│	 	    ├── agc_result.dart            # Tampilan Menu Hasil Pemrosesan Audio
-│	 	    ├── fade_page_route.dart       # Mengatur Perpindahan Halaman
-│	      ├── recording_result.dart      # Tampilan Menu Hasil Rekaman
-│		     ├── recording.dart             # Tampilan Menu Rekaman
-│	  ├── widgets/
-│	 	    ├── bottom_nav.dart            # Menu Navigasi
-│   ├── main.dart                      # App entry point
-│	  ├── splash_screen.dart             # loading aplikasi
-│   └── ...
-└── README.md                          # Dokumentasi proyek ini
-
+│   │   ├── agc_result.dart           # Tampilan Menu Hasil Pemrosesan Audio
+│   │   ├── fade_page_route.dart      # Mengatur Perpindahan Halaman
+│   │   ├── recording_result.dart     # Tampilan Menu Hasil Rekaman
+│   │   └── recording.dart            # Tampilan Menu Rekaman
+│   ├── widgets/
+│   │   └── bottom_nav.dart           # Menu Navigasi
+│   ├── main.dart                     # App entry point
+│   └── splash_screen.dart            # Loading aplikasi
+├── README.md                         # Dokumentasi proyek ini
+└── ...
 ```
 ## Fitur Utama
  1. Perekaman Suara
