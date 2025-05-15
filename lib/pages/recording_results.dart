@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 
 import 'package:agc_record/pages/fade_page_route.dart';
 import 'package:agc_record/widgets/bottom_nav.dart';
@@ -7,10 +8,10 @@ import 'package:audio_waveforms/audio_waveforms.dart';
 import 'package:awesome_dialog/awesome_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_ffmpeg/flutter_ffmpeg.dart';
-import 'package:flutter_fft/flutter_fft.dart';
 import 'package:http_parser/http_parser.dart';
-import 'package:just_audio/just_audio.dart';
+import 'package:intl/intl.dart';
 import 'package:logger/logger.dart';
+import 'package:ntp/ntp.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
 
@@ -29,6 +30,8 @@ class _RecordingResultsWidgetState extends State<RecordingResultsWidget> with Si
   int? _playingIndex;
   bool isPaused = false;
   bool isLoading = true;
+  bool isSharing = false;
+  int? sharingIndex;
 
   // untuk animasi icon
   late AnimationController _animationController;
@@ -220,91 +223,227 @@ class _RecordingResultsWidgetState extends State<RecordingResultsWidget> with Si
     ).show();
   }
 
+  Future<void> _showConfirmShare(context, FileSystemEntity file, int index) async {
+    if(_playingIndex == index){
+      await playerControllers[index].pausePlayer();
+      setState(() {
+        isPaused = true;
+      });
+    }else if (_playingIndex !=index && _playingIndex != null){
+      await playerControllers[_playingIndex!].pausePlayer();
+      setState(() {
+        isPaused = true;
+      });
+    }
+
+    AwesomeDialog(
+      context: context,
+      customHeader: AnimatedBuilder(
+        animation: _animationController,
+        builder: (context, child) {
+          // Determine colors based on the animation value
+          final isDeleteIcon = _animation.value < 0.5;
+          final iconColor = isDeleteIcon ? Colors.green : Colors.deepPurple;
+          final borderColor = isDeleteIcon ? Colors.green : Colors.deepPurple;
+
+          return Container(
+            decoration: BoxDecoration(
+              color: Colors.transparent, // No background color
+              borderRadius: BorderRadius.circular(50), // Border radius for rounded corners
+              border: Border.all(
+                color: borderColor, // Border color based on the icon
+                width: 2, // Border width
+              ),
+            ),
+            padding: const EdgeInsets.all(8), // Padding around the icon
+            child: Icon(
+              isDeleteIcon ? Icons.info : Icons.question_mark_rounded,
+              color: iconColor, // Icon color based on the icon
+              size: 50,
+            ),
+          );
+        },
+      ),
+      animType: AnimType.scale,
+      dismissOnTouchOutside: false,
+      title: 'Share Audio',
+      desc: "Are you sure you want to share this audio?",
+      btnOkText: "Yes",
+      btnCancelOnPress: () {},
+      btnOkOnPress: () async {
+        // Ambil file dari audioFiles
+        setState(() {
+          isSharing = true;
+        });
+
+        try {
+          // Konversi ke .wav
+          String wavFilePath = await convertToWav(file.path);
+          File wavFile = File(wavFilePath);
+
+          if (await wavFile.exists()) {
+            // Upload file jika ditemukan
+            await uploadAudioFile(wavFile);
+          } else {
+            var logger = Logger();
+            logger.e('File not found');
+          }
+        } catch (e) {
+          var logger = Logger();
+          logger.e('Error during upload: $e');
+        } finally {
+          if (mounted) {
+            setState(() {
+              isSharing = false;
+            });
+          }
+        }
+      },
+    ).show();
+  }
+
   Future<String> convertToWav(String inputPath) async {
     final outputPath = inputPath.replaceAll(".mp3", ".wav"); // atau sesuaikan format input
     await _ffmpeg.execute("-i $inputPath $outputPath");
     return outputPath;
   }
 
-  void _showConfirmShare(BuildContext context, FileSystemEntity file, int index) {
-  AwesomeDialog(
-    context: context,
-    animType: AnimType.scale,
-    dismissOnTouchOutside: false,
-    title: 'Share Audio',
-    desc: "Are you sure you want to share this audio?",
-    btnOkText: "Yes",
-    btnCancelOnPress: () {},
-    btnOkOnPress: () async {
-      // Ambil file dari audioFiles
-      final file = audioFiles[index];
+  Future<void> uploadAudioFile(File file) async {
+    // Mendapatkan waktu saat ini dalam format ISO 8601
+    final String currentTimeISO = DateTime.now().toIso8601String();
+    final int currentTimeMillis = DateTime.now().millisecondsSinceEpoch;
+    String currentTime = DateTime.now().toIso8601String(); // Format: YYYY-MM-DDTHH:mm:ss.sssZ
+    String sumber = "Mobile";
 
-      try {
-        // Konversi ke .wav
-        String wavFilePath = await convertToWav(file.path);
-        File wavFile = File(wavFilePath);
-
-        if (await wavFile.exists()) {
-          // Upload file jika ditemukan
-          await uploadAudioFile(wavFile);
-        } else {
-          print('File not found');
-        }
-      } catch (e) {
-        print('Error during upload: $e');
-      }
-    },
-  ).show();
-}
-
-Future<void> uploadAudioFile(File file) async {
     var request = http.MultipartRequest(
       'POST',
-      Uri.parse('http://agcrecord.batutech.cloud/upload-audio'),
+      Uri.parse('https://agcrecord.batutech.cloud/upload-audio'),
     );
 
-    // Ubah nama parameter di sini menjadi 'audio'
+    request.fields['process_time'] = currentTime;
+    request.fields['sumber_pengirim'] = sumber;
+    
     request.files.add(
       await http.MultipartFile.fromPath(
-        'audio',  // Ubah 'file' menjadi 'audio'
+        'audio',  
         file.path,
-        contentType: MediaType('audio', 'wav'),
       ),
     );
 
-    var startTime = DateTime.now();
+    // Menambahkan waktu proses ke request
+    var logger = Logger();
     var response = await request.send();
-    var endTime = DateTime.now();
-
-    var delay = endTime.difference(startTime).inMilliseconds;
+    final responseBody = await response.stream.bytesToString();
+    final Map<String, dynamic> responseJson = json.decode(responseBody);
 
     if (response.statusCode == 200) {
-      final responseBody = await response.stream.bytesToString();
-      print('Upload successful: $responseBody');
+      var delayFromServer = responseJson['delay'];
+      int delayFromServerMilliseconds = (delayFromServer * 1000).toInt();
+      var delayPushFromServer = responseJson['delay_push'];
+      int delayPushFromServerMilliseconds = (delayPushFromServer * 1000).toInt();
+      int idFromServer = responseJson['id'];
+      String outputFileFromServer = responseJson['output_files'];
+      String startPullServerString = responseJson['start_pull_server'];
+      var startPushServer = responseJson['start_time_pengiriman'];
+      var startPushServerMiliseconds = responseJson['start_time_pengiriman_miliseconds'];
+      int startPullServerMillisecondsFromServer = responseJson['start_pull_server_miliseconds'];
+
+      var endTimeClientPull = await NTP.now();
+
+      int endTimeClientPullMilliseconds = endTimeClientPull.millisecondsSinceEpoch;
+      DateTime startPullServerDateTime = DateTime.parse(startPullServerString);
+      Duration clientToServerDelay = (endTimeClientPull.difference(startPullServerDateTime));
+      int clientToServerDelayMilliseconds = clientToServerDelay.inMilliseconds;
+      var clientToServerDelaySeconds = clientToServerDelayMilliseconds / 1000;
+      int delayTotalMilliseconds = clientToServerDelayMilliseconds + delayFromServerMilliseconds;
+      var delayTotalSeconds = delayTotalMilliseconds / 1000;
+
+      final DateTime startPullServerDateTimeForPush = DateTime.parse(startPullServerString);
+      final String startTimePushServerFormatted = DateFormat('yyyy-MM-dd HH:mm:ss.SSS').format(startPullServerDateTimeForPush);
+
+      // Kirim data delay ke Flask
+      await updateDelayToServer(
+        id: idFromServer.toString(),
+        delayPullServerSeconds: clientToServerDelaySeconds.toString(),
+        delayPullServerMiliseconds: clientToServerDelayMilliseconds.toString(),
+        delayTotal: delayTotalSeconds.toString(),
+        endPullServer: endTimeClientPull.toString(),
+        namaFile: outputFileFromServer.toString(), // Atau nama file asli jika tersedia
+        startPullServer: startPullServerString.toString(),
+        startPullServerMiliseconds: startPullServerMillisecondsFromServer.toString(),
+        startPushServer: startPushServer.toString(),
+        startPushServerMiliseconds: startPushServerMiliseconds.toString(),
+        delayTotalMiliseconds: delayTotalMilliseconds.toString(),
+      );
 
       Map<String, dynamic> jsonResponse = {
-        'test': 'True',
-        'code': '200',
-        'response': responseBody,
-        'delay': delay,
+        'status': 'berhasil upload',
+        'delay_send': delayPushFromServer,
+        'delay_server': delayFromServer,
+        'delay_memuat': clientToServerDelaySeconds,
+        'delay_total': delayTotalSeconds,
       };
+      if (mounted) {
+        showUploadResult(jsonResponse);
+      }
 
-      showUploadResult(jsonResponse);
     } else {
-      final responseBody = await response.stream.bytesToString();
-      print('Upload failed with status: ${response.statusCode}, body: $responseBody');
-      
+      // Membuat JSON untuk status gagal
       Map<String, dynamic> jsonResponse = {
-        'test': 'False',
-        'code': '400',
-        'response': 'Upload failed with status: ${response.statusCode}, body: $responseBody',
-        'delay': null,
+        'status': 'berhasil gagal',
+        'delay_send': '-',
+        'delay_server': '-',
+        'delay_memuat': '-',
+        'delay_total': '-',
       };
 
-      showUploadResult(jsonResponse);
+      if (mounted) {
+        showUploadResult(jsonResponse);
+      }
     }
   }
+  Future<void> updateDelayToServer({
+    required String id,
+    required String delayPullServerSeconds,
+    required String delayPullServerMiliseconds,
+    required String delayTotal,
+    required String endPullServer,
+    required String namaFile,
+    required String startPullServer,
+    required String startPullServerMiliseconds,
+    required String startPushServer,
+    required String startPushServerMiliseconds,
+    required String delayTotalMiliseconds,
+  }) async {
+    var logger = Logger();
 
+    try {
+      final response = await http.post(
+        Uri.parse('https://agcrecord.batutech.cloud/update-delay'),
+        body: {
+          'id': id,
+          'namaFile': namaFile,
+          'startPushServer': startPushServer,
+          'startPushServerMiliseconds': startPushServerMiliseconds,
+          'startPullServer': startPullServer,
+          'startPullServerMiliseconds': startPullServerMiliseconds,
+          'endPullServer': endPullServer,
+          'delayPullServerMiliseconds': delayPullServerMiliseconds,
+          'delayPullServerSeconds': delayPullServerSeconds,
+          'delayTotal': delayTotal,
+          'delayTotalMiliseconds': delayTotalMiliseconds,
+        },
+      );
+
+      if (response.statusCode == 200) {
+        logger.i('Berhasil mengirim data delay ke server: ${response.body}');
+      } else {
+        logger.e('Gagal mengirim data delay ke server: ${response.statusCode}, ${response.body}');
+      }
+    } catch (e) {
+      logger.e('Error saat mengirim data delay: $e');
+    }
+  }
   void showUploadResult(Map<String, dynamic> response) {
     showDialog(
       context: context,
@@ -312,10 +451,11 @@ Future<void> uploadAudioFile(File file) async {
         return AlertDialog(
           title: const Text("Upload To Cloud"),
           content: Text(
-            'Testing: ${response['test']}\n'
-            'Code: ${response['code']}\n'
-            'Response: ${response['response']}\n'
-            'Delay: ${response['delay'] ?? 'N/A'} ms', // Menampilkan delay
+            'status: ${response['status']}\n'
+                'delay_send: ${response['delay_send']} detik\n'
+                'delay_server: ${response['delay_server']} detik\n'
+                'delay_memuat: ${response['delay_memuat']} detik\n'
+                'Total Delay: ${response['delay_total']} detik',
           ),
           actions: [
             TextButton(
@@ -465,12 +605,25 @@ Future<void> uploadAudioFile(File file) async {
                               ),
                             ),
                             // Icon share
-                            IconButton(
-                              icon: const Icon(Icons.share, color: Colors.blue),
-                              onPressed: () {
-                                _showConfirmShare(context, file, index); // Memanggil dialog konfirmasi
-                              },
-                            ),
+                            isSharing && index == sharingIndex
+                              ? SizedBox(
+                                  width: 24,
+                                  height: 24,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    valueColor: AlwaysStoppedAnimation<Color>(Colors.blue),
+                                  ),
+                                )
+                              : IconButton(
+                                  icon: const Icon(Icons.share, color: Colors.blue),
+                                  onPressed: isSharing ? null : () async {
+                                    setState(() {
+                                      sharingIndex = index;
+                                    });
+                                    await _showConfirmShare(context, file, index);
+                                  },
+                                ),
+                            // Icon delete
                             IconButton(
                               icon: const Icon(Icons.delete, color: Colors.red),
                               onPressed: () {

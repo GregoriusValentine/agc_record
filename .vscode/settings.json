@@ -5,5 +5,5 @@
         "editorWarning.foreground": "#00000000",
         "editorInfo.foreground":    "#00000000"
     },
-    "java.configuration.updateBuildConfiguration": "interactive"
+    "java.configuration.updateBuildConfiguration": "automatic"
 }
