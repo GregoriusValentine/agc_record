@@ -22,24 +22,24 @@ project_root/
 │   ├── pages/
 │	│	├── agc_result.dart        # Tampilan Menu Hasil Pemrosesan Audio
 │	│	├── fade_page_route.dart   # Mengatur Perpindahan Halaman
-│	│   ├── recording_result.dart  # Tampilan Menu Hasil Rekaman
+│	│       ├── recording_result.dart  # Tampilan Menu Hasil Rekaman
 │	│	├── recording.dart         # Tampilan Menu Rekaman
 │	├── widgets/
 │	│	├── bottom_nav.dart        # Menu Navigasi
-│   ├── main.dart                  # App entry point
-│	├── splash_screen.dart         # loading aplikasi
+│   ├── main.dart                          # App entry point
+│	├── splash_screen.dart             # loading aplikasi
 │   └── ...
 └── README.md # Dokumentasi proyek ini
 
 ```
 ## Fitur Utama
-
  1. Perekaman Suara
-      <p align="center"><img src="screenshots/Screenshot-1.jpg" alt="Perekaman Suara" width="200" style="margin-right: 10px"/></p>
  2. Pengriman Suara Audio Menuju Cloud Server
-	  <p align="center"><img src="screenshots/Screenshot-5.jpg" alt="Hasil Rekaman Suara" width="200"/></p>
  4. Hasil Pengelolaan Audio
-	<p align="center"><img src="screenshots/Screenshot-6.jpg" alt="Hasil Pengelolaan AGC" width="200" style="margin-right: 10px"/> </p>
+## Tampilan Aplikasi
+<p align="center"><img src="screenshots/Screenshot-1.jpg" alt="Perekaman Suara" width="200" style="margin-right: 10px"/></p>
+<p align="center"><img src="screenshots/Screenshot-5.jpg" alt="Hasil Rekaman Suara" width="200"/></p>
+<p align="center"><img src="screenshots/Screenshot-6.jpg" alt="Hasil Pengelolaan AGC" width="200" style="margin-right: 10px"/> </p>
 > Untuk Menampilkan Hasil Audio Secara Detail dapat mengakses <a href="https://agcrecord.batutech.cloud/" target="_blank">Hasil Pemrosesan Audio</a>
 
 ## 🔁Alur Fungsional Menu
