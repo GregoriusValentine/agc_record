@@ -1,7 +1,8 @@
 import 'package:agc_record/splash_screen.dart';
 import 'package:flutter/material.dart';
 
-void main() {
+
+void main(){
   runApp(const MainApp());
 }
 

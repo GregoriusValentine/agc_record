@@ -39,8 +39,8 @@ class _BottomNavWidgetsState extends State<BottomNavWidgets> {
   void onTapped(int index) {
     if(_isRecording){
       Flushbar(
-        title: "Still Recording",
-        message: "If you want to switch pages, finish recording first.",
+        title: "Masih Merekam",
+        message: "Jika Anda ingin berpindah halaman, selesaikan rekaman terlebih dahulu.",
         duration: const Duration(seconds: 2), // Increased duration to ensure visibility
         backgroundColor: Colors.green,
         icon: const Icon(

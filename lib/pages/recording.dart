@@ -52,7 +52,7 @@ class _RecordingWidgetState extends State<RecordingWidget> {
 
     for (var file in files) {
         final fileName = file.path.split('/').last;
-        final match = RegExp(r'Recording-(\d+)_Time-').firstMatch(fileName);
+        final match = RegExp(r'Recording-(\d+)-').firstMatch(fileName);
         if (match != null) {
           final index = int.parse(match.group(1)!);
           if (index > maxIndex) {
@@ -65,9 +65,9 @@ class _RecordingWidgetState extends State<RecordingWidget> {
 
   void _showRecordingSavedFlushbar(BuildContext context) {
     Flushbar(
-      title: "Saved Recordings",
-      message: "Your recording has been successfully saved.",
-      duration: const Duration(seconds: 1),
+      title: "Rekaman Tersimpan",
+      message: "Rekaman Anda telah berhasil disimpan.",
+      duration: const Duration(milliseconds: 1000),
       backgroundColor: Colors.green,
       icon: const Icon(
         Icons.check_circle,
@@ -79,6 +79,25 @@ class _RecordingWidgetState extends State<RecordingWidget> {
       borderRadius: BorderRadius.circular(8),
     ).show(context);
   }
+
+  void _showErrorFlushbar(BuildContext context, String message) {
+    Flushbar(
+      title: "Gagal Menyimpan Rekaman",
+      message: message,
+      duration: const Duration(seconds: 2),
+      backgroundColor: Colors.red,
+      icon: const Icon(
+        Icons.error,
+        color: Colors.white,
+      ),
+      flushbarPosition: FlushbarPosition.TOP,
+      flushbarStyle: FlushbarStyle.FLOATING,
+      margin: const EdgeInsets.all(12),
+      borderRadius: BorderRadius.circular(12),
+      animationDuration: const Duration(milliseconds: 300),
+    ).show(context);
+  }
+
 
   void _pauseOrResumeRecording() async {
     if (_isRecording && !_isPaused) {
@@ -104,15 +123,23 @@ class _RecordingWidgetState extends State<RecordingWidget> {
           await _recorderController.stop();
           String? path = await audioRecord.stop();
           _timer?.cancel();
-          setState(() {
-            _isRecording = false;
-            _isPaused = false;
-            _seconds = 0;
-            audioPath = path!;
-            widget.onRecordingStatusChange(false);
-          });
-          if (mounted) {
-            _showRecordingSavedFlushbar(context);
+          if (path != null && File(path).existsSync()) {
+            if (mounted) {
+              setState(() {
+                _isRecording = false;
+                _isPaused = false;
+                _seconds = 0;
+                audioPath = path;
+                widget.onRecordingStatusChange(false);
+              });
+
+              _showRecordingSavedFlushbar(context);
+            }
+          } else {
+            // File gagal disimpan atau path null
+            if (mounted) {
+              _showErrorFlushbar(context, 'error saat penyimpanan file');
+            }
           }
         } else {
           if(await Permission.storage.request().isGranted){
@@ -125,9 +152,9 @@ class _RecordingWidgetState extends State<RecordingWidget> {
               logger.d("Directory already exists: ${recordingsDir.path}");
             }
             final now = DateTime.now();
-            final formattedTime = DateFormat('hh-mm-ss-a').format(now);
+            final formattedTime = DateFormat('yyyyMMdd_HH-mm-ss').format(now);
             final incrementedFileName = await _getIncrementedFileName(recordingsDir);
-            final audioPath = '${recordingsDir.path}/${incrementedFileName}_Time-$formattedTime.wav';
+            final audioPath = '${recordingsDir.path}/${incrementedFileName}-$formattedTime.wav';
             logger.d("Recording path: $audioPath");
             _timer = Timer.periodic(
               const Duration(seconds: 1),
@@ -177,8 +204,8 @@ class _RecordingWidgetState extends State<RecordingWidget> {
 
         if (mounted) {
           Flushbar(
-            title: "Recording Canceled",
-            message: "Your recording has been canceled and is not saved.",
+            title: "Perekaman Dibatalkan",
+            message: "Rekaman Anda telah dibatalkan dan tidak disimpan.",
             duration: const Duration(seconds: 1),
             backgroundColor: Colors.red,
             icon: const Icon(
