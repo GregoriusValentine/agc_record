@@ -17,6 +17,8 @@ import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
 import 'package:permission_handler/permission_handler.dart';
 
+import '../widgets/loading.dart';
+
 class RecordingResultsWidget extends StatefulWidget {
   final int selectedIndex;
   const RecordingResultsWidget({super.key, required this.selectedIndex});
@@ -82,7 +84,9 @@ class _RecordingResultsWidgetState extends State<RecordingResultsWidget> with Si
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    _reinitializeState();
+    if (mounted) {
+      _loadAudioFiles();
+    }
   }
 
   Future<void> playAudio(String path, int index) async {
@@ -105,8 +109,7 @@ class _RecordingResultsWidgetState extends State<RecordingResultsWidget> with Si
       logger.i('Memulai pemutaran audio');
       logger.i('Path: $path');
       logger.i('Index: $index');
-      logger.i(
-          'Player controller state: ${playerControllers[index].playerState}');
+      logger.i('Player controller state: ${playerControllers[index].playerState}');
 
       if (_playingFilePath == path && isPaused) {
         logger.i('Melanjutkan pemutaran yang di-pause');
@@ -170,8 +173,8 @@ class _RecordingResultsWidgetState extends State<RecordingResultsWidget> with Si
           ),
         );
         Flushbar(
-          title: "File Deleted",
-          message: "Your recording has been successfully deleted.",
+          title: "Berkas Dihapus",
+          message: "Rekaman Anda telah berhasil dihapus.",
           duration: const Duration(seconds: 1),
           backgroundColor: Colors.green,
           icon: const Icon(
@@ -191,11 +194,28 @@ class _RecordingResultsWidgetState extends State<RecordingResultsWidget> with Si
   }
 
   Future<void> _loadAudioFiles() async {
+    setState(() {
+      isLoading = true;
+    });
     try {
       final directory = await getExternalStorageDirectory();
       final recordingsDir = Directory('${directory!.path}/MyRecordings');
+      final agcDir = Directory('${directory.path}/download/audioagc');
+
       if (await recordingsDir.exists()) {
         final files = recordingsDir.listSync();
+
+        // Ambil semua nama file AGC
+        List<String> agcFileNames = [];
+        if (await agcDir.exists()) {
+          agcFileNames = agcDir
+              .listSync()
+              .whereType<File>()
+              .map((file) => file.uri.pathSegments.last)
+              .where((name) => name.startsWith('agc_'))
+              .toList();
+        }
+
         files.sort((a, b) {
           final aName = a.uri.pathSegments.last;
           final bName = b.uri.pathSegments.last;
@@ -209,18 +229,23 @@ class _RecordingResultsWidgetState extends State<RecordingResultsWidget> with Si
           return bRaw.compareTo(aRaw);
         });
 
-        // Filter hanya file audio yang valid
-        final validFiles = files.where((file) => _isValidAudioFile(file.path))
+        // Filter hanya file audio yang valid dan tidak ada versi agc-nya
+        final validFiles = files
+            .whereType<File>()
+            .where((file) {
+          final fileName = file.uri.pathSegments.last;
+          return _isValidAudioFile(file.path) &&
+              !agcFileNames.contains('agc_$fileName');
+        })
             .toList();
 
         setState(() {
           audioFiles = validFiles;
-          // Buat map untuk menyimpan index asli
           fileToIndexMap = Map.fromEntries(
-              audioFiles
-                  .asMap()
-                  .entries
-                  .map((entry) => MapEntry(entry.value.path, entry.key))
+            audioFiles
+                .asMap()
+                .entries
+                .map((entry) => MapEntry(entry.value.path, entry.key)),
           );
           playerControllers = List<PlayerController>.generate(
             audioFiles.length,
@@ -249,6 +274,7 @@ class _RecordingResultsWidgetState extends State<RecordingResultsWidget> with Si
       }
     }
   }
+
 
   // Fungsi baru untuk inisialisasi player
   Future<void> _initializePlayers() async {
@@ -289,8 +315,7 @@ class _RecordingResultsWidgetState extends State<RecordingResultsWidget> with Si
     }
   }
 
-  void _showConfirmDelete(context, FileSystemEntity file, int index,
-      String name) async {
+  void _showConfirmDelete(context, FileSystemEntity file, int index, String name) async {
     if (_playingFilePath == file.path) {
       await playerControllers[index].pausePlayer();
       setState(() {
@@ -349,8 +374,7 @@ class _RecordingResultsWidgetState extends State<RecordingResultsWidget> with Si
     ).show();
   }
 
-  Future<void> _showConfirmShare(context, FileSystemEntity file, int index,
-      String name) async {
+  Future<void> _showConfirmShare(context, FileSystemEntity file, int index, String name) async {
     if (_playingFilePath == file.path) {
       await playerControllers[index].pausePlayer();
 
@@ -469,7 +493,6 @@ class _RecordingResultsWidgetState extends State<RecordingResultsWidget> with Si
 
     if (response.statusCode == 200) {
       var log = Logger();
-      log.i('plot: ${responseJson['plot']}');
       log.i('audio: ${responseJson['audio']}');
       var delayFromServer = responseJson['delay'];
       delayFromServerSeconds = delayFromServer;
@@ -481,18 +504,16 @@ class _RecordingResultsWidgetState extends State<RecordingResultsWidget> with Si
       var startPushServer = responseJson['start_time_pengiriman'];
       var startPushServerMiliseconds = responseJson['start_time_pengiriman_miliseconds'];
       int startPullServerMillisecondsFromServer = responseJson['start_pull_server_miliseconds'];
-
-      String plotFilename = responseJson['plot'];
       String audioFilename = responseJson['audio']; // Get the audio filename from response
 
-      if (plotFilename.isNotEmpty) {
+      if (audioFilename.isNotEmpty) {
         if (await Permission.storage.request().isGranted) {
           if (mounted) {
             // Create a new instance of MediaDownloader
             final downloader = MediaDownloader(context: context);
 
-            // Download both plot and audio
-            final result = await downloader.downloadMedia(plotFilename, audioFilename);
+            // Download and audio
+            final result = await downloader.downloadMedia(audioFilename);
 
             if (result != null && result['status'] == 'success') {
               var endTimeClientPull = await NTP.now();
@@ -529,6 +550,11 @@ class _RecordingResultsWidgetState extends State<RecordingResultsWidget> with Si
           }
         }
       }
+      Future.delayed(Duration(seconds: 1), () {
+        if (mounted) {
+          _reinitializeState();
+        }
+      });
     } else {
       // Membuat JSON untuk status gagal
       Map<String, dynamic> jsonResponse = {
@@ -542,6 +568,11 @@ class _RecordingResultsWidgetState extends State<RecordingResultsWidget> with Si
       if (mounted) {
         showUploadResult(jsonResponse);
       }
+      Future.delayed(const Duration(seconds: 3), () {
+        if (mounted) {
+          _reinitializeState();
+        }
+      });
     }
   }
 
@@ -651,8 +682,18 @@ class _RecordingResultsWidgetState extends State<RecordingResultsWidget> with Si
       // Load ulang file audio
       final directory = await getExternalStorageDirectory();
       final recordingsDir = Directory('${directory!.path}/MyRecordings');
+      final agcDir = Directory('${directory.path}/download/audioagc');
       if (await recordingsDir.exists()) {
         final files = recordingsDir.listSync();
+        List<String> agcFileNames = [];
+        if (await agcDir.exists()) {
+          agcFileNames = agcDir
+              .listSync()
+              .whereType<File>()
+              .map((file) => file.uri.pathSegments.last)
+              .where((name) => name.startsWith('agc_'))
+              .toList();
+        }
         files.sort((a, b) {
           final aName = a.uri.pathSegments.last;
           final bName = b.uri.pathSegments.last;
@@ -667,8 +708,13 @@ class _RecordingResultsWidgetState extends State<RecordingResultsWidget> with Si
         });
 
 
-        final validFiles = files.where((file) => _isValidAudioFile(file.path))
-            .toList();
+        final validFiles = files
+            .whereType<File>()
+            .where((file) {
+          final fileName = file.uri.pathSegments.last;
+          return _isValidAudioFile(file.path) &&
+              !agcFileNames.contains('agc_$fileName');
+        }).toList();
 
         setState(() {
           audioFiles = validFiles;
@@ -791,15 +837,19 @@ class _RecordingResultsWidgetState extends State<RecordingResultsWidget> with Si
     return _filteredFiles;
   }
 
-
-
   @override
   Widget build(BuildContext context) {
-    var width = MediaQuery
-        .of(context)
-        .size
-        .width;
-
+    var height = MediaQuery.of(context).size.height;
+    var width = MediaQuery.of(context).size.width;
+    var isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
+    final loadingWidget = Loading().buildEmptyState(
+      height,
+      width,
+      isLandscape,
+      _animationController,
+      _animation,
+      searchQuery.isEmpty ? "Belum ada file audio" : "Data tidak ditemukan",
+    );
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.blueAccent,
@@ -814,8 +864,7 @@ class _RecordingResultsWidgetState extends State<RecordingResultsWidget> with Si
         child: Column(
           children: [
             Container(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 16.0, vertical: 12.0),
+              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
               color: Colors.white,
               child: Column(
                 children: [
@@ -909,12 +958,8 @@ class _RecordingResultsWidgetState extends State<RecordingResultsWidget> with Si
                 ],
               ),
             ),
-
-            // Divider between search and content
             const Divider(height: 1, thickness: 1, color: Color(0xFFEEEEEE)),
-            // Content Area
-            isLoading
-                ? const Expanded(
+            isLoading ? const Expanded(
               child: Center(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -927,70 +972,8 @@ class _RecordingResultsWidgetState extends State<RecordingResultsWidget> with Si
                   ],
                 ),
               ),
-            )
-                : Expanded(
-              child: filteredAndSortedFiles.isEmpty
-                  ? Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    // Empty state animation
-                    AnimatedBuilder(
-                      animation: _animationController,
-                      builder: (context, child) {
-                        final isAnimatedIcon = _animation.value < 0.8;
-                        return Container(
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFF5F5F5),
-                            borderRadius: BorderRadius.circular(60),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.05),
-                                blurRadius: 10,
-                                offset: const Offset(0, 4),
-                              ),
-                            ],
-                          ),
-                          padding: const EdgeInsets.all(24),
-                          child: Icon(
-                            isAnimatedIcon ? Icons.search_off_rounded : Icons
-                                .headphones,
-                            color: isAnimatedIcon ? Colors.blueAccent : Colors
-                                .deepPurple,
-                            size: 72,
-                          ),
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 32),
-                    Text(
-                      searchQuery.isEmpty
-                          ? "Belum ada file audio"
-                          : "Tidak ada hasil untuk",
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.black87,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 40),
-                      child: Text(
-                        searchQuery.isEmpty
-                            ? "Rekam audio baru untuk melihat hasil Anda di sini"
-                            : "Coba kata kunci pencarian yang berbeda",
-                        style: TextStyle(
-                          fontSize: 16,
-                          color: Colors.grey[600],
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                  ],
-                ),
-              )
-                  : ListView.builder(
+            ):Expanded(
+              child: filteredAndSortedFiles.isEmpty ? loadingWidget : ListView.builder(
                 padding: const EdgeInsets.only(top: 8),
                 scrollDirection: Axis.vertical,
                 itemCount: filteredAndSortedFiles.length,
@@ -1159,6 +1142,14 @@ class _RecordingResultsWidgetState extends State<RecordingResultsWidget> with Si
           ],
         ),
       ),
+      floatingActionButton: isLoading
+          ? null
+          : FloatingActionButton(
+        onPressed: _reinitializeState,
+        child: const Icon(Icons.refresh),
+        backgroundColor: Colors.blueAccent,
+        foregroundColor: Colors.white,
+      )
     );
   }
 }
@@ -1172,25 +1163,19 @@ class MediaDownloader {
   var log = Logger();
   late void Function(int received, int total) _updateProgress;
   bool _isDownloadComplete = false;
-  String _plotPathDownloaded = '';
   String _audioPathDownloaded = '';
   String _delaySend = '';
   String _delayServer = '';
   String _delayClient = '';
   String _delayTotal = '';
   bool _showingDelayInfo = false;
-  String _currentDownloadType = 'plot';
+  String _currentDownloadType = 'audio';
   StateSetter? _dialogSetState;
 
   // Constructor
   MediaDownloader({required this.context});
 
-  Future<Map<String, dynamic>?> downloadMedia(String plotFilename, String audioFilename) async {
-    if (plotFilename.isEmpty) {
-      _showErrorDialog('Nama file plot tidak valid');
-      return null;
-    }
-
+  Future<Map<String, dynamic>?> downloadMedia(String audioFilename) async {
     if (audioFilename.isEmpty) {
       _showErrorDialog('Nama file audio tidak valid');
       return null;
@@ -1198,18 +1183,8 @@ class MediaDownloader {
 
     if (await Permission.storage.request().isGranted) {
       try {
-        // First download the plot
-        _currentDownloadType = 'plot';
-        _showProgressDialog(); // Show initial dialog for plot download
-
-        final plotResult = await _downloadPlot(plotFilename);
-        if (plotResult == null || plotResult['status'] != 'success') {
-          return null;
-        }
-
-        // Then download the audio
         _currentDownloadType = 'audio';
-        _resetProgress(); // Update dialog to show audio download progress
+        _showProgressDialog();
 
         final audioResult = await _downloadAudio(audioFilename);
         if (audioResult == null || audioResult['status'] != 'success') {
@@ -1219,7 +1194,6 @@ class MediaDownloader {
         // Both downloads successful
         return {
           'status': 'success',
-          'plotFilePath': _plotPathDownloaded,
           'audioFilePath': _audioPathDownloaded
         };
       } catch (e) {
@@ -1229,59 +1203,6 @@ class MediaDownloader {
       }
     } else {
       _showErrorDialog('Izin penyimpanan tidak diberikan');
-      return null;
-    }
-  }
-
-  Future<Map<String, dynamic>?> _downloadPlot(String plotFilename) async {
-    try {
-      final dio = Dio();
-      final plotUrl = 'https://agcrecord.batutech.cloud/api/download-plot/$plotFilename';
-
-      final dir = await getExternalStorageDirectory();
-      final path = Directory('${dir!.path}/download/plot');
-
-      if (!await path.exists()) {
-        await path.create(recursive: true);
-        log.i("📁 Folder plot dibuat: ${path.path}");
-      }
-
-      final filePath = '${path.path}/$plotFilename';
-
-      final responseDownload = await dio.download(
-        plotUrl,
-        filePath,
-        onReceiveProgress: (received, total) {
-          if (total != -1) {
-            _updateProgress(received, total);
-            print("📥 Progres unduh plot: ${(received / total * 100).toStringAsFixed(0)}%");
-          }
-        },
-      );
-
-      if (responseDownload.statusCode == 200) {
-        log.i('✅ Gambar plot berhasil diunduh dan disimpan di: $filePath');
-
-        _updateProgress(1, 1); // Update to 100%
-
-        // Store the file path for the success dialog
-        _plotPathDownloaded = filePath;
-
-        // Small delay to show 100% complete before proceeding
-        await Future.delayed(const Duration(milliseconds: 500));
-
-        return {
-          'status': 'success',
-          'filePath': filePath
-        };
-      } else {
-        _dismissDialog();
-        _showErrorDialog('Gagal mengunduh gambar plot. Status: ${responseDownload.statusCode}');
-        return null;
-      }
-    } catch (e) {
-      _dismissDialog();
-      _showErrorDialog('Kesalahan saat mengunduh gambar plot: $e');
       return null;
     }
   }
@@ -1346,7 +1267,7 @@ class MediaDownloader {
     _progressText = '0%';
   }
 
-  void _showProgressDialog() {
+    void _showProgressDialog() {
     _dialog = AwesomeDialog(
       context: context,
       dialogType: DialogType.noHeader,
@@ -1372,9 +1293,7 @@ class MediaDownloader {
           };
 
           Widget buildSuccessContent() {
-            String downloadTitle = _currentDownloadType == 'plot'
-                ? 'Mengunduh Gambar Plot'
-                : 'Mengunduh File Audio';
+            String downloadTitle = 'Mengunduh File Audio';
 
             return Padding(
               padding: const EdgeInsets.all(20.0),
@@ -1383,7 +1302,7 @@ class MediaDownloader {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    _isDownloadComplete ? 'Unduhan Berhasil' : (_currentDownloadType == 'plot' ? 'Mengunduh Gambar Plot' : 'Mengunduh File Audio'),
+                    _isDownloadComplete ? 'Unduhan Berhasil ✅' : 'Mengunduh File Audio',
                     style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 16),
@@ -1398,21 +1317,6 @@ class MediaDownloader {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('Lokasi plot:', style: TextStyle(fontWeight: FontWeight.bold)),
-                        const SizedBox(height: 6),
-                        (_plotPathDownloaded.isEmpty && !_isDownloadComplete)
-                            ? const Row(
-                          children: [
-                            SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            ),
-                            SizedBox(width: 8),
-                            Text('Mengunduh plot...'),
-                          ],
-                        ): Text(_plotPathDownloaded.isNotEmpty ? _plotPathDownloaded : '-', style: const TextStyle(fontSize: 12)),
-                        const SizedBox(height: 12),
                         // Bagian informasi path lokasi audio
                         const Text('Lokasi audio:', style: TextStyle(fontWeight: FontWeight.bold)),
                         const SizedBox(height: 6),
@@ -1444,19 +1348,28 @@ class MediaDownloader {
                   ],
 
                   const SizedBox(height: 20),
-                  Center(
-                    child: ElevatedButton(
-                      onPressed: () {
-                        _dismissDialog();
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.blue,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 12),
+                  if (_isDownloadComplete && _showingDelayInfo) ...[
+                    Center(
+                      child: ElevatedButton(
+                        onPressed: () {
+                          _dismissDialog();
+                          final state = context.findAncestorStateOfType<_RecordingResultsWidgetState>();
+                          if (state != null && state.mounted) {
+                            // Slight delay to ensure dialog is fully dismissed
+                            Future.delayed(const Duration(milliseconds: 300), () {
+                              state._reinitializeState();
+                            });
+                          }
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.blue,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 12),
+                        ),
+                        child: const Text('OK'),
                       ),
-                      child: Text(_isDownloadComplete ? 'OK' : 'Batal'),
                     ),
-                  ),
+                  ],
                 ],
               ),
             );

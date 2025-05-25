@@ -75,7 +75,7 @@ class _BottomNavWidgetsState extends State<BottomNavWidgets> {
         children: [
           RecordingWidget(onRecordingStatusChange: _updateRecordingStatus),
           const RecordingResultsWidget(selectedIndex: 1),
-          const AgcResultsWidget()
+          const AgcResultsWidget(selectedIndex: 2)
         ],
       ),
       bottomNavigationBar: NavigationBar(

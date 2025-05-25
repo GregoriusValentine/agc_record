@@ -1,75 +1,75 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:another_flushbar/flushbar.dart';
+import 'package:audio_waveforms/audio_waveforms.dart';
 import 'package:awesome_dialog/awesome_dialog.dart';
 import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:audioplayers/audioplayers.dart';
 import 'package:logger/logger.dart';
+import 'package:path_provider/path_provider.dart';
 
-class AgcResult {
-  final int id;
-  final String originalFile;
-  final String processedFile;
-  final String plotData;
-  final String originalUrl;
-  final String processedUrl;
-  final double timestamp;
+import '../utils/helper.dart';
+import '../widgets/bottom_nav.dart';
+import '../widgets/loading.dart';
+import 'fade_page_route.dart';
 
-  AgcResult({
-    required this.id,
-    required this.originalFile,
-    required this.processedFile,
-    required this.plotData,
-    required this.originalUrl,
-    required this.processedUrl,
-    required this.timestamp,
+class AudioPair {
+  final FileSystemEntity agcFile;
+  final FileSystemEntity? originalFile;
+  final String fileName;
+  final String? formattedDate;
+
+  AudioPair({
+    required this.agcFile,
+    this.originalFile,
+    required this.fileName,
+    this.formattedDate,
   });
-
-  factory AgcResult.fromJson(Map<String, dynamic> json) {
-    return AgcResult(
-      id: json['id'],
-      originalFile: json['original_file'],
-      processedFile: json['processed_file'],
-      plotData: json['plot_data'],
-      originalUrl: json['original_url'],
-      processedUrl: json['processed_url'],
-      timestamp: json['timestamp'],
-    );
-  }
 }
 
 class AgcResultsWidget extends StatefulWidget {
-  const AgcResultsWidget({super.key});
+  final int selectedIndex;
+  const AgcResultsWidget({super.key, required this.selectedIndex});
 
   @override
   State<AgcResultsWidget> createState() => _AgcResultsWidgetState();
 }
 
-class _AgcResultsWidgetState extends State<AgcResultsWidget> with SingleTickerProviderStateMixin, AutomaticKeepAliveClientMixin, WidgetsBindingObserver {
-  List<AgcResult> results = [];
+class _AgcResultsWidgetState extends State<AgcResultsWidget> with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+  List<AudioPair> audioPairs = [];
+  List<PlayerController> agcPlayerControllers = [];
+  List<PlayerController> originalPlayerControllers = [];
+  Map<String, int> fileToIndexMap = {};
+  String? _playingAgcFilePath;
+  String? _playingOriginalFilePath;
   bool isLoading = true;
   bool isRefreshing = false;
+  bool isPausedAgc = false;
+  bool isPausedOriginal = false;
+  String searchQuery = '';
+  String sortOrder = 'terbaru';
   late AnimationController _animationController;
   late Animation<double> _animation;
-  bool _isVisible = true;
-  double lastTimestamp = 0;
+  List<AudioPair> _filteredPairs = [];
+  Timer? _debounce;
+  var logger = Logger();
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _loadAudioFiles();
     _initializeAnimation();
-    fetchResults();
   }
 
-    @override
-    void didChangeAppLifecycleState(AppLifecycleState state) {
-      super.didChangeAppLifecycleState(state);
-      _isVisible = state == AppLifecycleState.resumed;
-    }
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _reinitializeState();
+  }
 
   void _initializeAnimation() {
     _animationController = AnimationController(
@@ -88,84 +88,560 @@ class _AgcResultsWidgetState extends State<AgcResultsWidget> with SingleTickerPr
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _debounce?.cancel();
+    for (var controller in agcPlayerControllers) {
+      controller.dispose();
+    }
+    for (var controller in originalPlayerControllers) {
+      controller.dispose();
+    }
     _animationController.dispose();
     super.dispose();
   }
 
-  Future<void> fetchResults() async {
-    if (!isRefreshing) {
-      setState(() {
-        isLoading = true;
-      });
-    }
+  Future<void> playAgcAudio(String path, int index) async {
     try {
-      final response = await http.get(
-        Uri.parse('https://agcrecord.batutech.cloud/api/agc-results?last_timestamp=$lastTimestamp'),
-      );
-      
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        if (data['status'] == 'success') {
-          List<AgcResult> newResults = (data['data'] as List)
-              .map((item) => AgcResult.fromJson(item))
-              .toList();
-          
-          setState(() {
-            results.addAll(newResults);
-            if (newResults.isNotEmpty) {
-              lastTimestamp = newResults.map((r) => r.timestamp).reduce(max);
+      final file = File(path);
+      if (!await file.exists()) {
+        logger.e('File tidak ditemukan: $path');
+        return;
+      }
+
+      final fileSize = await file.length();
+      logger.i('Ukuran file: $fileSize bytes');
+      if (fileSize == 0) {
+        logger.e('File kosong: $path');
+        return;
+      }
+
+      await agcPlayerControllers[index].setVolume(1.0);
+
+      logger.i('Memulai pemutaran audio AGC');
+      logger.i('Path: $path');
+      logger.i('Index: $index');
+      logger.i('Player controller state: ${agcPlayerControllers[index].playerState}');
+
+      // If playing original audio, stop it first
+      if (_playingOriginalFilePath != null) {
+        final originalIndex = fileToIndexMap[_playingOriginalFilePath!];
+        if (originalIndex != null) {
+          await originalPlayerControllers[originalIndex].pausePlayer();
+        }
+        setState(() {
+          _playingOriginalFilePath = null;
+          isPausedOriginal = false;
+        });
+      }
+
+      if (_playingAgcFilePath == path && isPausedAgc) {
+        logger.i('Melanjutkan pemutaran AGC yang di-pause');
+        await agcPlayerControllers[index].startPlayer(
+            finishMode: FinishMode.loop
+        );
+        setState(() {
+          isPausedAgc = false;
+        });
+      } else if (_playingAgcFilePath == path) {
+        logger.i('Menghentikan pemutaran AGC');
+        await agcPlayerControllers[index].pausePlayer();
+        setState(() {
+          isPausedAgc = true;
+        });
+      } else {
+        logger.i('Memulai pemutaran AGC baru');
+        if (_playingAgcFilePath != null) {
+          final oldIndex = fileToIndexMap[_playingAgcFilePath!];
+          if (oldIndex != null) {
+            await agcPlayerControllers[oldIndex].pausePlayer();
+          }
+        }
+        setState(() {
+          _playingAgcFilePath = path;
+          isPausedAgc = false;
+        });
+
+        await agcPlayerControllers[index].startPlayer(
+            finishMode: FinishMode.loop
+        );
+      }
+    } catch (e) {
+      logger.e("Error saat memutar audio AGC", error: e);
+    }
+  }
+
+  Future<void> playOriginalAudio(String path, int index) async {
+    try {
+      final file = File(path);
+      if (!await file.exists()) {
+        logger.e('File tidak ditemukan: $path');
+        return;
+      }
+
+      final fileSize = await file.length();
+      logger.i('Ukuran file: $fileSize bytes');
+      if (fileSize == 0) {
+        logger.e('File kosong: $path');
+        return;
+      }
+
+      await originalPlayerControllers[index].setVolume(1.0);
+
+      logger.i('Memulai pemutaran audio Original');
+      logger.i('Path: $path');
+      logger.i('Index: $index');
+      logger.i('Player controller state: ${originalPlayerControllers[index].playerState}');
+
+      // If playing AGC audio, stop it first
+      if (_playingAgcFilePath != null) {
+        final agcIndex = fileToIndexMap[_playingAgcFilePath!];
+        if (agcIndex != null) {
+          await agcPlayerControllers[agcIndex].pausePlayer();
+        }
+        setState(() {
+          _playingAgcFilePath = null;
+          isPausedAgc = false;
+        });
+      }
+
+      if (_playingOriginalFilePath == path && isPausedOriginal) {
+        logger.i('Melanjutkan pemutaran Original yang di-pause');
+        await originalPlayerControllers[index].startPlayer(
+            finishMode: FinishMode.loop
+        );
+        setState(() {
+          isPausedOriginal = false;
+        });
+      } else if (_playingOriginalFilePath == path) {
+        logger.i('Menghentikan pemutaran Original');
+        await originalPlayerControllers[index].pausePlayer();
+        setState(() {
+          isPausedOriginal = true;
+        });
+      } else {
+        logger.i('Memulai pemutaran Original baru');
+        if (_playingOriginalFilePath != null) {
+          final oldIndex = fileToIndexMap[_playingOriginalFilePath!];
+          if (oldIndex != null) {
+            await originalPlayerControllers[oldIndex].pausePlayer();
+          }
+        }
+        setState(() {
+          _playingOriginalFilePath = path;
+          isPausedOriginal = false;
+        });
+
+        await originalPlayerControllers[index].startPlayer(
+            finishMode: FinishMode.loop
+        );
+      }
+    } catch (e) {
+      logger.e("Error saat memutar audio Original", error: e);
+    }
+  }
+
+  Future<void> deleteAudioPair(AudioPair audioPair, int index) async {
+    try {
+      // Delete AGC file
+      await audioPair.agcFile.delete();
+
+      // Delete original file if exists
+      if (audioPair.originalFile != null) {
+        await audioPair.originalFile!.delete();
+      }
+
+      if (mounted) {
+        setState(() {
+          audioPairs.removeAt(index);
+          agcPlayerControllers.removeAt(index);
+          originalPlayerControllers.removeAt(index);
+
+          if (_playingAgcFilePath == audioPair.agcFile.path) {
+            _playingAgcFilePath = null;
+            isPausedAgc = false;
+          }
+
+          if (audioPair.originalFile != null && _playingOriginalFilePath == audioPair.originalFile!.path) {
+            _playingOriginalFilePath = null;
+            isPausedOriginal = false;
+          }
+
+          // Update fileToIndexMap
+          fileToIndexMap.clear();
+          for (int i = 0; i < audioPairs.length; i++) {
+            fileToIndexMap[audioPairs[i].agcFile.path] = i;
+            if (audioPairs[i].originalFile != null) {
+              fileToIndexMap[audioPairs[i].originalFile!.path] = i;
             }
+          }
+        });
+
+        Navigator.pushReplacement(
+          context,
+          FadePageRoute(
+            page: BottomNavWidgets(initialIndex: widget.selectedIndex),
+          ),
+        );
+
+        Flushbar(
+          title: "File Dihapus",
+          message: "File audio telah berhasil dihapus.",
+          duration: const Duration(seconds: 1),
+          backgroundColor: Colors.green,
+          icon: const Icon(
+            Icons.check_circle,
+            color: Colors.white,
+          ),
+          flushbarPosition: FlushbarPosition.TOP,
+          flushbarStyle: FlushbarStyle.FLOATING,
+          margin: const EdgeInsets.all(8),
+          borderRadius: BorderRadius.circular(8),
+        ).show(context);
+      }
+    } catch (e) {
+      logger.e("Error saat menghapus file", error: e);
+    }
+  }
+
+  bool _isValidAudioFile(String path) {
+    final file = File(path);
+    final extension = path.split('.').last.toLowerCase();
+    return file.existsSync() && (extension == 'wav' || extension == 'mp3');
+  }
+
+  Future<void> _loadAudioFiles() async {
+    try {
+      final directory = await getExternalStorageDirectory();
+
+      // AGC audio directory
+      final agcDir = Directory('${directory!.path}/download/audioagc');
+
+      // Original audio directory
+      final originalDir = Directory('${directory.path}/MyRecordings');
+
+      if (await agcDir.exists()) {
+        final agcFiles = agcDir.listSync().where((file) => _isValidAudioFile(file.path)).toList();
+        agcFiles.sort((a, b) {
+          final aName = a.uri.pathSegments.last;
+          final bName = b.uri.pathSegments.last;
+
+          final aRaw = FileHelper.extractTanggalDanWaktu(aName);
+          final bRaw = FileHelper.extractTanggalDanWaktu(bName);
+
+          if (aRaw == null || bRaw == null) return 0;
+
+          // Sort from newest to oldest
+          return bRaw.compareTo(aRaw);
+        });
+
+        // Create list of AudioPair objects
+        List<AudioPair> pairs = [];
+
+        for (var agcFile in agcFiles) {
+          final agcFileName = agcFile.uri.pathSegments.last;
+
+          String nameOriginal = agcFileName.replaceFirst('agc_', '');
+          FileSystemEntity? originalFile;
+          if (await originalDir.exists()) {
+            final originalPath = '${originalDir.path}/${nameOriginal}';
+            final originalFileObj = File(originalPath);
+            if (await originalFileObj.exists()) {
+              originalFile = originalFileObj;
+            }
+          }
+
+          // Extract date and time for display
+          String? rawDateTime = FileHelper.extractTanggalDanWaktu(agcFileName);
+          String? formattedDate = FileHelper.formatTanggalDenganWaktu(rawDateTime);
+
+          // Create AudioPair
+          pairs.add(AudioPair(
+            agcFile: agcFile,
+            originalFile: originalFile,
+            fileName: agcFileName,
+            formattedDate: formattedDate,
+          ));
+        }
+
+        setState(() {
+          audioPairs = pairs;
+
+          // Create player controllers for both AGC and original audio
+          agcPlayerControllers = List<PlayerController>.generate(
+            audioPairs.length,
+                (index) => PlayerController(),
+          );
+
+          originalPlayerControllers = List<PlayerController>.generate(
+            audioPairs.length,
+                (index) => PlayerController(),
+          );
+
+          // Create mapping from file paths to indices
+          fileToIndexMap.clear();
+          for (int i = 0; i < audioPairs.length; i++) {
+            fileToIndexMap[audioPairs[i].agcFile.path] = i;
+            if (audioPairs[i].originalFile != null) {
+              fileToIndexMap[audioPairs[i].originalFile!.path] = i;
+            }
+          }
+        });
+
+        await _initializePlayers();
+
+        setState(() {
+          isLoading = false;
+        });
+      } else {
+        if (mounted) {
+          setState(() {
             isLoading = false;
           });
         }
-      } else {
-        throw Exception('Failed to load results');
       }
     } catch (e) {
-      if(mounted){
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${e.toString()}')),
-        );
-      }
-    } finally {
+      logger.e("Error saat memuat file audio", error: e);
       if (mounted) {
         setState(() {
           isLoading = false;
-          isRefreshing = false;
         });
       }
     }
   }
 
-  String formatTime(Duration duration) {
-    String twoDigital(int n) => n.toString().padLeft(2, '0');
-    final hours = twoDigital(duration.inHours);
-    final minutes = twoDigital(duration.inMinutes.remainder(60));
-    final seconds = twoDigital(duration.inSeconds.remainder(60));
+  Future<void> _initializePlayers() async {
+    for (int i = 0; i < audioPairs.length; i++) {
+      final agcFile = audioPairs[i].agcFile;
+      final originalFile = audioPairs[i].originalFile;
 
-    return [
-      if (duration.inHours > 0) hours,
-      minutes,
-      seconds,
-    ].join(':');
+      // Initialize AGC player controller
+      if (await File(agcFile.path).exists()) {
+        try {
+          await agcPlayerControllers[i].preparePlayer(
+            path: agcFile.path,
+            shouldExtractWaveform: true,
+            noOfSamples: 100,
+            volume: 1.0,
+          );
+
+          agcPlayerControllers[i].onPlayerStateChanged.listen((state) {
+            logger.i('AGC Player $i state changed to: $state');
+          });
+
+          logger.i('AGC Player berhasil diinisialisasi untuk file: ${agcFile.path}');
+        } catch (e) {
+          logger.e('Error saat inisialisasi AGC player: $e');
+        }
+      }
+
+      // Initialize Original player controller if file exists
+      if (originalFile != null && await File(originalFile.path).exists()) {
+        try {
+          await originalPlayerControllers[i].preparePlayer(
+            path: originalFile.path,
+            shouldExtractWaveform: true,
+            noOfSamples: 100,
+            volume: 1.0,
+          );
+
+          originalPlayerControllers[i].onPlayerStateChanged.listen((state) {
+            logger.i('Original Player $i state changed to: $state');
+          });
+
+          logger.i('Original Player berhasil diinisialisasi untuk file: ${originalFile.path}');
+        } catch (e) {
+          logger.e('Error saat inisialisasi Original player: $e');
+        }
+      }
+    }
   }
 
-  Future<void> _refreshData() async {
+  Future<void> _reinitializeState() async {
     setState(() {
-      isRefreshing = true;
+      isLoading = true;
     });
-    await fetchResults();
+
+    try {
+      // Stop all ongoing playback
+      if (_playingAgcFilePath != null) {
+        final agcIndex = fileToIndexMap[_playingAgcFilePath];
+        if (agcIndex != null) {
+          await agcPlayerControllers[agcIndex].pausePlayer();
+        }
+      }
+
+      if (_playingOriginalFilePath != null) {
+        final originalIndex = fileToIndexMap[_playingOriginalFilePath];
+        if (originalIndex != null) {
+          await originalPlayerControllers[originalIndex].pausePlayer();
+        }
+      }
+
+      // Dispose all player controllers
+      for (var controller in agcPlayerControllers) {
+        controller.dispose();
+      }
+
+      for (var controller in originalPlayerControllers) {
+        controller.dispose();
+      }
+
+      // Reset state
+      agcPlayerControllers = [];
+      originalPlayerControllers = [];
+      _playingAgcFilePath = null;
+      _playingOriginalFilePath = null;
+      isPausedAgc = false;
+      isPausedOriginal = false;
+      _filteredPairs = [];
+
+      // Reload audio files
+      await _loadAudioFiles();
+    } catch (e) {
+      logger.e("Error saat menginisialisasi ulang state", error: e);
+    } finally {
+      setState(() {
+        isLoading = false;
+      });
+      _updateFilteredPairs();
+    }
   }
 
-  @override
-  bool get wantKeepAlive => true;
+  void _updateFilteredPairs() {
+    var filtered = audioPairs.where((pair) {
+      final fileName = pair.fileName.toLowerCase();
+      final searchTerms = searchQuery.toLowerCase().split(' ');
+      return searchTerms.every((term) => fileName.contains(term));
+    }).toList();
+
+    if (sortOrder == 'terbaru') {
+      filtered.sort((a, b) {
+        final aName = a.fileName;
+        final bName = b.fileName;
+
+        final aRaw = FileHelper.extractTanggalDanWaktu(aName);
+        final bRaw = FileHelper.extractTanggalDanWaktu(bName);
+
+        if (aRaw == null || bRaw == null) return 0;
+
+        // Newest to oldest
+        return bRaw.compareTo(aRaw);
+      });
+    } else {
+      filtered.sort((a, b) {
+        final aName = a.fileName;
+        final bName = b.fileName;
+
+        final aRaw = FileHelper.extractTanggalDanWaktu(aName);
+        final bRaw = FileHelper.extractTanggalDanWaktu(bName);
+
+        if (aRaw == null || bRaw == null) return 0;
+
+        // Oldest to newest
+        return aRaw.compareTo(bRaw);
+      });
+    }
+
+    setState(() {
+      _filteredPairs = filtered;
+    });
+  }
+
+  void _onSearchChanged(String value) {
+    if (_debounce?.isActive ?? false) _debounce!.cancel();
+    _debounce = Timer(const Duration(milliseconds: 500), () {
+      setState(() {
+        searchQuery = value;
+      });
+      _updateFilteredPairs();
+    });
+  }
+
+  List<AudioPair> get filteredAndSortedPairs {
+    if (_filteredPairs.isEmpty) {
+      _updateFilteredPairs();
+    }
+    return _filteredPairs;
+  }
+
+  void _showConfirmDelete(BuildContext context, AudioPair audioPair, int index, String name) async {
+    // Pause any playing audio
+    if (_playingAgcFilePath == audioPair.agcFile.path) {
+      await agcPlayerControllers[index].pausePlayer();
+      setState(() {
+        isPausedAgc = true;
+      });
+    } else if (_playingAgcFilePath != null) {
+      final oldIndex = fileToIndexMap[_playingAgcFilePath!];
+      if (oldIndex != null) {
+        await agcPlayerControllers[oldIndex].pausePlayer();
+      }
+    }
+
+    if (audioPair.originalFile != null && _playingOriginalFilePath == audioPair.originalFile!.path) {
+      await originalPlayerControllers[index].pausePlayer();
+      setState(() {
+        isPausedOriginal = true;
+      });
+    } else if (_playingOriginalFilePath != null) {
+      final oldIndex = fileToIndexMap[_playingOriginalFilePath!];
+      if (oldIndex != null) {
+        await originalPlayerControllers[oldIndex].pausePlayer();
+      }
+    }
+
+    AwesomeDialog(
+      context: context,
+      customHeader: AnimatedBuilder(
+        animation: _animationController,
+        builder: (context, child) {
+          final isDeleteIcon = _animation.value < 0.5;
+          final iconColor = isDeleteIcon ? Colors.red : Colors.deepPurple;
+          final borderColor = isDeleteIcon ? Colors.red : Colors.deepPurple;
+
+          return Container(
+            decoration: BoxDecoration(
+              color: Colors.transparent,
+              borderRadius: BorderRadius.circular(50),
+              border: Border.all(
+                color: borderColor,
+                width: 2,
+              ),
+            ),
+            padding: const EdgeInsets.all(8),
+            child: Icon(
+              isDeleteIcon ? Icons.delete_outline : Icons.question_mark_rounded,
+              color: iconColor,
+              size: 50,
+            ),
+          );
+        },
+      ),
+      animType: AnimType.scale,
+      dismissOnTouchOutside: false,
+      title: '${name}',
+      desc: "Apakah Anda yakin ingin menghapus audio ini?",
+      btnOkText: "Ya",
+      btnCancelText: "Batal",
+      btnCancelOnPress: () {},
+      btnOkOnPress: () async {
+        deleteAudioPair(audioPair, index);
+      },
+    ).show();
+  }
 
   @override
   Widget build(BuildContext context) {
-    super.build(context);
     var height = MediaQuery.of(context).size.height;
     var width = MediaQuery.of(context).size.width;
     var isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
+    final loadingWidget = Loading().buildEmptyState(
+        height,
+        width,
+        isLandscape,
+        _animationController,
+        _animation,
+        searchQuery.isEmpty ? "Belum Ada File Audio" : "Data tidak ditemukan"
+    );
 
     return Scaffold(
       appBar: AppBar(
@@ -175,452 +651,372 @@ class _AgcResultsWidgetState extends State<AgcResultsWidget> with SingleTickerPr
           style: TextStyle(color: Colors.white),
         ),
       ),
-      body: RefreshIndicator(
-        onRefresh: _refreshData,
-        child: Stack(
+      body: SafeArea(
+        child: Column(
           children: [
-            if (results.isEmpty && !isLoading)
-              _buildEmptyState(height, width, isLandscape)
-            else if (!isLoading)
-              ListView.builder(
-                itemCount: results.length,
-                itemBuilder: (context, index) {
-                  final result = results[index];
-                  return AudioCard(result: result);
-                },
-              ),
-            if (isLoading && !isRefreshing)
-              const Center(child: CircularProgressIndicator()),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildEmptyState(double height, double width, bool isLandscape) {
-    return ListView(
-      children: [
-        SizedBox(height: isLandscape ? height * 0.2 : height * 0.3),
-        Center(
-          child: SizedBox(
-            width: width * 0.5,
-            height: isLandscape ? height * 0.25 : height * 0.15,
-            child: Opacity(
-              opacity: 0.3,
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+              color: Colors.white,
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  AnimatedBuilder(
-                    animation: _animationController,
-                    builder: (context, child) {
-                      final isAnimatedIcon = _animation.value < 0.5;
-                      final iconColor = isAnimatedIcon ? Colors.blue : Colors.deepPurple;
-
-                      return Container(
-                        decoration: BoxDecoration(
-                          color: Colors.transparent,
-                          borderRadius: BorderRadius.circular(50),
-                          border: Border.all(
-                            color: iconColor,
-                            width: 2,
+                  Container(
+                    decoration: BoxDecoration(
+                      color: Colors.grey[100],
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.05),
+                          blurRadius: 5,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: TextField(
+                      decoration: InputDecoration(
+                        hintText: 'Cari Berdasarkan Nama...',
+                        hintStyle: TextStyle(color: Colors.grey[400]),
+                        prefixIcon: Icon(Icons.search, color: Colors.grey[500]),
+                        border: InputBorder.none,
+                        contentPadding: const EdgeInsets.symmetric(vertical: 16),
+                      ),
+                      onChanged: _onSearchChanged,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.filter_list,
+                        color: Colors.grey[600],
+                      ),
+                      const SizedBox(width: 8),
+                      InkWell(
+                        onTap: () {
+                          sortOrder = 'terbaru';
+                          _reinitializeState();
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: sortOrder == 'terbaru'
+                                ? Colors.blueAccent
+                                : Colors.transparent,
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Text(
+                            'Terbaru',
+                            style: TextStyle(
+                              color: sortOrder == 'terbaru'
+                                  ? Colors.white
+                                  : Colors.grey[700],
+                              fontWeight: sortOrder == 'terbaru' ? FontWeight.bold : FontWeight.normal,
+                            ),
                           ),
                         ),
-                        padding: isLandscape ? const EdgeInsets.all(10) : const EdgeInsets.all(20),
-                        child: Icon(
-                          isAnimatedIcon ? Icons.search_off_rounded : Icons.search,
-                          color: iconColor,
-                          size: isLandscape ? 40 : 50,
+                      ),
+                      const SizedBox(width: 8),
+                      InkWell(
+                        onTap: () {
+                          sortOrder = 'terlama';
+                          _reinitializeState();
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: sortOrder == 'terlama'
+                                ? Colors.blueAccent
+                                : Colors.transparent,
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Text(
+                            'Terlama',
+                            style: TextStyle(
+                              color: sortOrder == 'terlama'
+                                  ? Colors.white
+                                  : Colors.grey[700],
+                              fontWeight: sortOrder == 'terlama' ? FontWeight.bold : FontWeight.normal,
+                            ),
+                          ),
                         ),
-                      );
-                    },
-                  ),
-                  AnimatedBuilder(
-                    animation: _animationController,
-                    builder: (context, child) {
-                      final isAnimatedIcon = _animation.value < 0.5;
-                      final textColor = isAnimatedIcon ? Colors.blue : Colors.deepPurple;
-
-                      return Text(
-                        "Blank AGC Results",
-                        style: TextStyle(
-                          color: textColor,
-                          fontSize: isLandscape ? 15 : 20,
-                        ),
-                      );
-                    },
+                      ),
+                    ],
                   ),
                 ],
               ),
             ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class AudioCard extends StatefulWidget {
-  final AgcResult result;
-
-  const AudioCard({super.key, required this.result});
-
-  @override
-  State<AudioCard> createState() => _AudioCardState();
-}
-
-class _AudioCardState extends State<AudioCard> {
-  final audioPlayer = AudioPlayer();
-  bool isPlayingOriginal = false;
-  bool isPlayingProcessed = false;
-  bool isExpanded = false;
-  bool isLoadingOriginal = false; // Loading untuk original audio
-  bool isLoadingProcessed = false; // Loading untuk processed audio
-  Duration duration = Duration.zero;
-  Duration positionOriginal = Duration.zero;
-  Duration positionProcessed = Duration.zero;
-  String? plotData;
-
-  @override
-  void initState() {
-    super.initState();
-    plotData = widget.result.plotData; 
-    
-    audioPlayer.onPlayerStateChanged.listen((state) {
-      setState(() {
-        isPlayingOriginal = state == PlayerState.playing && isPlayingOriginal;
-        isPlayingProcessed = state == PlayerState.playing && isPlayingProcessed;
-
-        if (state == PlayerState.playing) {
-          isLoadingOriginal = false;
-          isLoadingProcessed = false;
-        }
-      });
-    });
-
-    audioPlayer.onDurationChanged.listen((newDuration) {
-      setState(() {
-        duration = newDuration;
-      });
-    });
-
-    audioPlayer.onPositionChanged.listen((newPosition) {
-      setState(() {
-        if (isPlayingOriginal) {
-          positionOriginal = newPosition;
-        } else if (isPlayingProcessed) {
-          positionProcessed = newPosition;
-        }
-      });
-    });
-
-    audioPlayer.onPlayerComplete.listen((_) {
-      setState(() {
-        if (isPlayingOriginal) {
-          positionOriginal = Duration.zero;
-          isPlayingOriginal = false;
-        } else if (isPlayingProcessed) {
-          positionProcessed = Duration.zero;
-          isPlayingProcessed = false;
-        }
-      });
-    });
-  }
-
-  @override
-  void dispose() {
-    audioPlayer.stop();
-    audioPlayer.dispose();
-    super.dispose();
-  }
-
-  String formatTime(Duration duration) {
-    String twoDigital(int n) => n.toString().padLeft(2, '0');
-    final hours = twoDigital(duration.inHours);
-    final minutes = twoDigital(duration.inMinutes.remainder(60));
-    final seconds = twoDigital(duration.inSeconds.remainder(60));
-
-    return [
-      if (duration.inHours > 0) hours,
-      minutes,
-      seconds,
-    ].join(':');
-  }
-
-  Future<void> _deleteAudio() async {
-    try {
-      var log = Logger();
-      final response = await http.delete(
-        Uri.parse('https://agcrecord.batutech.cloud/api/delete-audio/${widget.result.originalFile}'),
-      );
-      log.i('${response.statusCode}');
-      if (response.statusCode == 200) {
-        if (mounted) {
-
-
-          // Hapus item dari list
-          final agcResultsState = context.findAncestorStateOfType<_AgcResultsWidgetState>();
-          if (agcResultsState != null) {
-            agcResultsState.setState(() {
-              agcResultsState.results.removeWhere(
-                (r) => r.originalFile == widget.result.originalFile
-              );
-            });
-          }
-          
-          _showSuccessDialog();
-        }
-      } else {
-        throw Exception('Failed to delete audio');
-      }
-    } catch (e) {
-      if (mounted) {
-        _showErrorDialog('Failed to delete audio: $e');
-      }
-    }
-  }
-
-  void _showDeleteConfirmation() {
-    AwesomeDialog(
-      context: context,
-      dialogType: DialogType.warning,
-      animType: AnimType.bottomSlide,
-      title: 'Delete Audio',
-      desc: 'Are you sure you want to delete this audio?',
-      btnCancelOnPress: () {},
-      btnOkOnPress: () {
-        _deleteAudio();
-      },
-      btnCancelText: 'Cancel',
-      btnOkText: 'Delete',
-      btnOkColor: Colors.red,
-    ).show();
-  }
-
-  void _showSuccessDialog() {
-    if (!mounted) return;
-    Flushbar(
-      title: "Success",
-      message: "Audio deleted successfully.",
-      duration: const Duration(seconds: 1),
-      backgroundColor: Colors.green,
-      icon: const Icon(
-        Icons.check_circle,
-        color: Colors.white,
-      ),
-      flushbarPosition: FlushbarPosition.TOP,
-      flushbarStyle: FlushbarStyle.FLOATING,
-      margin: const EdgeInsets.all(8),
-      borderRadius: BorderRadius.circular(8),
-    ).show(context);
-  }
-
-  void _showErrorDialog(String errorMessage) {
-    if (!mounted) return;
-
-    Flushbar(
-      title: "Error",
-      message: "${errorMessage}",
-      duration: const Duration(seconds: 1),
-      backgroundColor: Colors.red,
-      icon: const Icon(
-        Icons.error,
-        color: Colors.white,
-      ),
-      flushbarPosition: FlushbarPosition.TOP,
-      flushbarStyle: FlushbarStyle.FLOATING,
-      margin: const EdgeInsets.all(8),
-      borderRadius: BorderRadius.circular(8),
-    ).show(context);
-  }
-
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.all(8.0),
-      color: Colors.grey[700],
-      child: ExpansionTile(
-        collapsedShape: const RoundedRectangleBorder(
-            side: BorderSide.none,
-        ),
-        shape: const RoundedRectangleBorder(
-          side: BorderSide.none,
-        ),
-        title: Text(
-          widget.result.originalFile,
-          style: const TextStyle(color: Colors.white),
-        ),
-        collapsedIconColor: Colors.white,
-        iconColor: Colors.white,
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  margin: const EdgeInsets.only(bottom: 13.0),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  clipBehavior: Clip.antiAlias,
-                  child: plotData != null
-                    ? Image.memory(
-                        base64Decode(plotData!),
-                        fit: BoxFit.cover,
-                        gaplessPlayback: true,
-                      )
-                    : Container(),
+            const Divider(height: 1, thickness: 1, color: Color(0xFFEEEEEE)),
+            isLoading
+                ? const Expanded(
+              child: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Center(
+                      child: CircularProgressIndicator(
+                        color: Colors.blueAccent,
+                      ),
+                    )
+                  ],
                 ),
-                _buildAudioPlayer(
-                  title: 'Before AGC',
-                  url: 'https://agcrecord.batutech.cloud${widget.result.originalUrl}',
-                  isPlaying: isPlayingOriginal,
-                  position: positionOriginal,
-                ),
-                _buildAudioPlayer(
-                  title: 'After AGC',
-                  url: 'https://agcrecord.batutech.cloud${widget.result.processedUrl}',
-                  isPlaying: isPlayingProcessed,
-                  position: positionProcessed,
-                ),
-              ],
-            ),
-          ),
-        ],
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              icon: const Icon(Icons.delete, color: Colors.red),
-              onPressed: _showDeleteConfirmation,
-            ),
-            const Icon(Icons.expand_more, color: Colors.white),
-          ],
-        ),
-      ),
-    );
-  }
+              ),
+            )
+                : Expanded(
+              child: filteredAndSortedPairs.isEmpty
+                  ? loadingWidget
+                  : ListView.builder(
+                padding: const EdgeInsets.only(top: 8),
+                scrollDirection: Axis.vertical,
+                itemCount: filteredAndSortedPairs.length,
+                itemBuilder: (context, index) {
+                  final audioPair = filteredAndSortedPairs[index];
+                  final originalIndex = fileToIndexMap[audioPair.agcFile.path] ?? 0;
+                  final agcPlayerController = agcPlayerControllers[originalIndex];
+                  final originalPlayerController = originalPlayerControllers[originalIndex];
 
-  Widget _buildAudioPlayer({
-    required String title,
-    required String url,
-    required bool isPlaying,
-    required Duration position,
-  }) {
-    bool isOriginal = url.contains(widget.result.originalUrl);
-    bool isLoading = isOriginal ? isLoadingOriginal : isLoadingProcessed;
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(16),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.05),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Header with filename and date
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    audioPair.formattedDate!,
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      color: Colors.grey[600],
+                                    ),
+                                  ),
+                                ),
+                                IconButton(
+                                  onPressed: () {
+                                    _showConfirmDelete(
+                                        context,
+                                        audioPair,
+                                        originalIndex,
+                                        audioPair.fileName
+                                    );
+                                  },
+                                  icon: const Icon(Icons.delete_outline, size: 20),
+                                  color: Colors.redAccent,
+                                ),
+                              ],
+                            ),
+                          ),
+                          Theme(
+                              data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+                              child: ExpansionTile(
+                                title: Text(
+                                  audioPair.fileName,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 16,
+                                    color: Colors.black87,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                collapsedBackgroundColor: Colors.transparent,
+                                backgroundColor: Colors.transparent,
+                                children: [
+                                  // AGC Audio Player
+                                  Container(
+                                    padding: const EdgeInsets.all(12),
+                                    margin: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+                                    decoration: BoxDecoration(
+                                      color: Colors.blue[50],
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(color: Colors.blue[200]!),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        const Text(
+                                          "AGC Audio",
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.blueAccent,
+                                            fontSize: 14,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        Row(
+                                          children: [
+                                            // Play/pause button
+                                            Container(
+                                              height: 44,
+                                              width: 44,
+                                              decoration: BoxDecoration(
+                                                color: _playingAgcFilePath == audioPair.agcFile.path
+                                                    ? Colors.blueAccent
+                                                    : Colors.white,
+                                                shape: BoxShape.circle,
+                                                boxShadow: [
+                                                  BoxShadow(
+                                                    color: Colors.black.withOpacity(0.1),
+                                                    blurRadius: 4,
+                                                    offset: const Offset(0, 2),
+                                                  ),
+                                                ],
+                                              ),
+                                              child: IconButton(
+                                                icon: Icon(
+                                                  _playingAgcFilePath == audioPair.agcFile.path && !isPausedAgc
+                                                      ? Icons.pause
+                                                      : Icons.play_arrow,
+                                                  color: _playingAgcFilePath == audioPair.agcFile.path
+                                                      ? Colors.white
+                                                      : Colors.blueAccent,
+                                                  size: 24,
+                                                ),
+                                                onPressed: () {
+                                                  playAgcAudio(audioPair.agcFile.path, originalIndex);
+                                                },
+                                                padding: EdgeInsets.zero,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 12),
+                                            // Waveform
+                                            Expanded(
+                                              child: AudioFileWaveforms(
+                                                playerController: agcPlayerController,
+                                                size: Size(width - 140, 40),
+                                                enableSeekGesture: true,
+                                                waveformType: WaveformType.long,
+                                                playerWaveStyle: const PlayerWaveStyle(
+                                                  fixedWaveColor: Color(0xFFE0E0E0),
+                                                  liveWaveColor: Colors.blueAccent,
+                                                  waveThickness: 2.5,
+                                                  seekLineThickness: 2.0,
+                                                  showSeekLine: true,
+                                                  seekLineColor: Colors.blueAccent,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                  ),
 
-    return Card(
-      margin: const EdgeInsets.only(bottom: 13.0),
-      color: Colors.grey[800],
-      child: Padding(
-        padding: const EdgeInsets.only(right: 13.0, bottom: 13.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.only(left: 20.0, top: 20.0),
-              child: Text(
-                title,
-                style: const TextStyle(color: Colors.white),
+                                  // Original Audio Player (if exists)
+                                  if (audioPair.originalFile != null)
+                                  Container(
+                                      padding: const EdgeInsets.all(12),
+                                      margin: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+                                      decoration: BoxDecoration(
+                                        color: Colors.green[50],
+                                        borderRadius: BorderRadius.circular(12),
+                                        border: Border.all(color: Colors.green[200]!),
+                                      ),
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          const Text(
+                                            "Original Audio",
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.green,
+                                              fontSize: 14,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 8),
+                                          Row(
+                                            children: [
+                                              // Play/pause button
+                                              Container(
+                                                height: 44,
+                                                width: 44,
+                                                decoration: BoxDecoration(
+                                                  color: _playingOriginalFilePath == audioPair.originalFile!.path
+                                                      ? Colors.green
+                                                      : Colors.white,
+                                                  shape: BoxShape.circle,
+                                                  boxShadow: [
+                                                    BoxShadow(
+                                                      color: Colors.black.withOpacity(0.1),
+                                                      blurRadius: 4,
+                                                      offset: const Offset(0, 2),
+                                                    ),
+                                                  ],
+                                                ),
+                                                child: IconButton(
+                                                  icon: Icon(
+                                                    _playingOriginalFilePath == audioPair.originalFile!.path && !isPausedOriginal
+                                                        ? Icons.pause
+                                                        : Icons.play_arrow,
+                                                    color: _playingOriginalFilePath == audioPair.originalFile!.path
+                                                        ? Colors.white
+                                                        : Colors.green,
+                                                    size: 24,
+                                                  ),
+                                                  onPressed: () {
+                                                    playOriginalAudio(audioPair.originalFile!.path, originalIndex);
+                                                  },
+                                                  padding: EdgeInsets.zero,
+                                                ),
+                                              ),
+                                              const SizedBox(width: 12),
+                                              // Waveform
+                                              Expanded(
+                                                child: AudioFileWaveforms(
+                                                  playerController: originalPlayerController,
+                                                  size: Size(width - 140, 40),
+                                                  enableSeekGesture: true,
+                                                  waveformType: WaveformType.long,
+                                                  playerWaveStyle: const PlayerWaveStyle(
+                                                    fixedWaveColor: Color(0xFFE0E0E0),
+                                                    liveWaveColor: Colors.blueAccent,
+                                                    waveThickness: 2.5,
+                                                    seekLineThickness: 2.0,
+                                                    showSeekLine: true,
+                                                    seekLineColor: Colors.blueAccent,
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                ],
+                              ),
+                          )
+                        ],
+                      ),
+                    ),
+                  );
+                },
               ),
             ),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                IconButton(
-                  icon: isLoading 
-                      ? const SizedBox(
-                          width: 24,
-                          height: 24,
-                          child: CircularProgressIndicator(
-                            color: Colors.white,
-                            strokeWidth: 2,
-                          ),
-                        )
-                      : Icon(
-                          isPlaying ? Icons.pause : Icons.play_arrow,
-                          color: Colors.white
-                        ),
-                  onPressed: isLoadingOriginal || isLoadingProcessed
-                      ? null 
-                      : () async {
-                          if (isPlaying) {
-                            await audioPlayer.pause();
-                            setState(() {
-                              isPlayingOriginal = false;
-                              isPlayingProcessed = false;
-                            });
-                          } else {
-                            setState(() {
-                              if (isOriginal) {
-                                isLoadingOriginal = true;
-                              } else {
-                                isLoadingProcessed = true;
-                              }
-                            });
-                            try {
-                              // Stop other playback first
-                              if (isPlayingOriginal || isPlayingProcessed) {
-                                await audioPlayer.stop();
-                              }
-                              await audioPlayer.play(UrlSource(url));
-                              setState(() {
-                                isPlayingOriginal = isOriginal;
-                                isPlayingProcessed = !isOriginal;
-                              });
-                            } catch (e) {
-                              if (mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text('Error playing audio: $e')),
-                                );
-                              }
-                            } finally {
-                              if (mounted) {
-                                setState(() {
-                                  if (isOriginal) {
-                                    isLoadingOriginal = false;
-                                  } else {
-                                    isLoadingProcessed = false;
-                                  }
-                                });
-                              }
-                            }
-                          }
-                        },
-                ),
-                Text(
-                  formatTime(position),
-                  style: const TextStyle(color: Colors.white),
-                ),
-                Expanded(
-                  child: Slider(
-                    min: 0,
-                    max: duration.inSeconds.toDouble(),
-                    value: position.inSeconds.toDouble(),
-                    onChanged: (value) async {
-                      final newPosition = Duration(seconds: value.toInt());
-                      await audioPlayer.seek(newPosition);
-                      setState(() {
-                        if (isPlayingOriginal) {
-                          positionOriginal = newPosition;
-                        } else if (isPlayingProcessed) {
-                          positionProcessed = newPosition;
-                        }
-                      });
-                    },
-                  ),
-                ),
-                Text(
-                  formatTime(duration - position),
-                  style: const TextStyle(color: Colors.white)
-                ),
-              ],
-            ),
           ],
         ),
       ),
+      floatingActionButton: isLoading
+          ? null
+          : FloatingActionButton(
+        onPressed: _reinitializeState,
+        child: const Icon(Icons.refresh),
+        backgroundColor: Colors.blueAccent,
+        foregroundColor: Colors.white,
+      )
     );
   }
 }
